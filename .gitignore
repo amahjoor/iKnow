@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+*/.venv/
+*/venv/
+.venv/
+
+# Environment variables
+.env
+.env.local
+
+# Exports (iMessage)
+*/exports/
+*/exports_txt/
+*/exports_html/
+
+# Exports (Contacts)
+data_aggregation/.venv/
+data_aggregation/z_attachments/
+data_aggregation/*.vcf
+data_aggregation/all.vcf
+data_aggregation/data/
+
+# Database
+halo.db
+
+# Misc
+imessage-exporter/
+.old/
+electron-app-old/
+random/
