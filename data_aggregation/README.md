@@ -10,6 +10,7 @@ Export your contacts and iMessage conversations to structured JSON format with i
 - **📊 Message Count Filtering** - Only exports contacts with 10+ messages (configurable)
 - **🧠 Conversation Insights** - Adds communication analytics to each contact file
 - **🤖 LLM-Ready Format** - Creates consolidated conversation files optimized for AI processing
+- **🔒 Privacy Protection** - Anonymizes sensitive data in LLM files with name/phone placeholders
 - **🎯 Message Grouping** - Combines consecutive messages from same sender within 10 minutes
 - **🧽 Content Cleaning** - Removes stop words, noise, and system artifacts
 - **😀 Emoji Optimization** - Converts emojis to text descriptions, removes duplicates
@@ -65,7 +66,7 @@ If multiple VCF files are found in the directory, you'll be prompted to select w
 ### Command Line Options
 
 ```
-usage: contacts_exporter.py [-h] [--min-messages MIN_MESSAGES] [vcf_file]
+usage: contacts_exporter.py [-h] [--min-messages MIN_MESSAGES] [--disable-privacy] [vcf_file]
 
 Export contacts and iMessage conversations to structured JSON format
 
@@ -78,7 +79,9 @@ optional arguments:
   --min-messages MIN_MESSAGES
                         Minimum number of messages for a contact to be exported
                         (default: 10)
-```
+  --disable-privacy     Disable privacy features for LLM data (don't anonymize
+                        sensitive information)
+   ```
 
 ## Configuration
 
@@ -98,6 +101,47 @@ By default, only contacts with **10 or more messages** are exported. To change t
 - `MIN_MESSAGE_COUNT = 5` - Export contacts with 5+ messages
 - `MIN_MESSAGE_COUNT = 50` - Export only very active conversations
 - `MIN_MESSAGE_COUNT = 1` - Export contacts with any message history
+
+## Privacy Protection Features
+
+By default, the exporter anonymizes sensitive information in the LLM-ready files to protect privacy while preserving conversation context for AI processing.
+
+### Privacy Features
+
+- **Name Anonymization** - Contact names replaced with `[[PERSON]]` placeholders
+- **Phone Number Anonymization** - Phone numbers replaced with unique identifiers like `[[PHONE_1]]`
+- **Address Removal** - Address information is completely removed from LLM data
+- **De-identification Mapping** - Privacy mappings stored separately to allow restoration if needed
+
+### Privacy Mapping Files
+
+A separate mapping file (`privacy_mapping.json`) is created for each contact, containing:
+
+```json
+{
+  "name": "Original Contact Name",
+  "phones": {
+    "[[PHONE_1]]": "+15551234567",
+    "[[PHONE_2]]": "+15559876543"
+  },
+  "original_data": {
+    "contact": { /* original contact information */ },
+    "metadata": { /* original conversation metadata */ }
+  }
+}
+```
+
+### Master Privacy Mapping
+
+A master mapping file is created in the `_llm_ready` folder, containing mappings for all contacts.
+
+### Disabling Privacy Features
+
+If you need the original unmodified data in your LLM files, you can disable privacy features:
+
+```bash
+python contacts_exporter.py --disable-privacy
+```
 
 ## Output Structure
 

@@ -10,18 +10,55 @@ from dateutil.parser import parse
 from datetime import datetime, timedelta
 import emoji
 
+# Import LLM privacy functionality from separate module
+from llm_privacy import (
+    set_privacy_enabled, 
+    create_llm_conversation_file, 
+    create_llm_master_files,
+    optimize_messages_for_llm,
+    generate_conversation_metadata,
+    ANONYMIZE_LLM_DATA
+)
+
 # Configuration
 MAIN_OUTPUT_FOLDER = "data"
 ALL_MESSAGES_FOLDER = "_all_messages"
 SUMMARY_FOLDER = "_summary"
 ATTACHMENT_FOLDER = "attachments"
+LLM_FOLDER = "_llm_ready"  # Folder for LLM-ready conversation files
+LLM_INDEX_FILE = "master_index.json"  # Master index file name
 MIN_MESSAGE_COUNT = 10  # Only export contacts with this many messages or more
 
-# LLM-Ready Format Configuration
-LLM_FOLDER = "_llm_ready"
-LLM_CONVERSATIONS_FOLDER = "conversations"
-LLM_INDEX_FILE = "master_index.json"
-LLM_SUMMARIES_FILE = "conversation_summaries.json"
+
+
+
+# Enhanced username patterns to catch directly mentioned usernames
+USERNAME_CONTEXT_PATTERNS = [
+    r'github\s+username\s+is\s+([A-Za-z0-9_-]{3,})',        # GitHub username is X
+    r'gh\s+username\s+is\s+([A-Za-z0-9_-]{3,})',            # gh username is X
+    r'github\s+user\s+is\s+([A-Za-z0-9_-]{3,})',            # GitHub user is X
+    r'twitter\s+handle\s+is\s+@?([A-Za-z0-9_]{3,})',        # Twitter handle is X
+    r'instagram\s+(?:is|username)\s+@?([A-Za-z0-9_\.]{3,})', # Instagram is X or username is X
+    r'ig\s+(?:is|username)\s+@?([A-Za-z0-9_\.]{3,})',        # ig is X or username is X 
+    r'linkedin\s+(?:is|profile)\s+([A-Za-z0-9_-]{3,})',      # LinkedIn is X or profile is X
+    r'facebook\s+(?:is|username)\s+([A-Za-z0-9\.]{3,})',     # Facebook is X or username is X
+    r'discord\s+(?:is|tag)\s+([A-Za-z0-9_#\.]{3,})',         # Discord is X or tag is X
+    r'telegram\s+(?:is|username)\s+@?([A-Za-z0-9_]{3,})',    # Telegram is X or username is X
+    r'my\s+username\s+(?:is|:)\s+([A-Za-z0-9_\.-]{3,})',      # My username is X
+    r'username\s+(?:is|:)\s+([A-Za-z0-9_\.-]{3,})',           # Username is X (general)
+    r'my\s+github\s+username\s+is\s+([A-Za-z0-9_-]{3,})',     # My GitHub username is X
+    r'my\s+twitter\s+(?:handle|username)\s+is\s+@?([A-Za-z0-9_]{3,})'  # My Twitter handle/username is X
+]
+
+# Password detection patterns (look for context followed by potential password)
+PASSWORD_PATTERNS = [
+    r'password\s+(?:is|:)\s+([A-Za-z0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]{6,})',  # "password is X" or "password: X"
+    r'pwd\s+(?:is|:)\s+([A-Za-z0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]{6,})',       # "pwd is X" or "pwd: X"
+    r'credentials\s+(?:are|is|:)\s+([A-Za-z0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]{6,})',  # "credentials are X"
+    r'login\s+(?:is|:)\s+([A-Za-z0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]{6,})',     # "login is X" or "login: X"
+    r'passw[o0]rd\s*[=:]\s*([A-Za-z0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]{6,})',   # password=X or password:X
+    r'the\s+password\s+(?:is|:)\s+([A-Za-z0-9!@#$%^&*()_+\-=\[\]{}|;:,.<>?]{6,})',  # "the password is X"
+]
 
 def count_messages_in_file(file_path):
     """
@@ -627,7 +664,7 @@ def process_vcard_data(vcard_data):
         # Create LLM master files
         print(f"\n🔄 Step 5: Creating LLM-ready conversation files...")
         if llm_conversations_data:
-            master_index_path, summaries_path = create_llm_master_files(llm_conversations_data, MAIN_OUTPUT_FOLDER)
+            master_index_path, summaries_path = create_llm_master_files(llm_conversations_data, MAIN_OUTPUT_FOLDER, MIN_MESSAGE_COUNT)
             print(f"  ✓ Created master index: {master_index_path}")
             print(f"  ✓ Created conversation summaries: {summaries_path}")
         else:
@@ -791,196 +828,6 @@ def consolidate_contact_messages(contact_name, phone_numbers, temp_export_dir):
     
     return all_messages, phone_usage
 
-def generate_conversation_metadata(messages, contact_data):
-    """
-    Generate conversation intelligence metadata for LLM processing
-    """
-    if not messages:
-        return {}
-    
-    # Basic stats
-    total_messages = len(messages)
-    sent_messages = sum(1 for m in messages if m.get('sender') == 'me')
-    received_messages = sum(1 for m in messages if m.get('sender') == 'contact')
-    
-    # Date range
-    timestamps = [m.get('timestamp') for m in messages if m.get('timestamp')]
-    if timestamps:
-        first_message = min(timestamps)
-        
-        try:
-            first_date = parse(first_message)
-            current_date = datetime.now()
-            conversation_span_days = (current_date - first_date).days
-            
-            date_range = f"{first_date.strftime('%Y-%m-%d')} to present"
-        except Exception:
-            date_range = f"{first_message} to present"
-            conversation_span_days = 0
-    else:
-        date_range = "Unknown"
-        conversation_span_days = 0
-    
-    # Phone number usage - we'll need to get this from the consolidation process
-    phone_usage = contact_data.get('phone_usage', {})
-    most_active_number = max(phone_usage.items(), key=lambda x: x[1])[0] if phone_usage else "unknown"
-    
-    # Message frequency
-    message_frequency = round(total_messages / max(conversation_span_days, 1), 2)
-    
-    metadata = {
-        "total_messages": total_messages,
-        "sent_messages": sent_messages,
-        "received_messages": received_messages,
-        "date_range": date_range,
-        "conversation_span_days": conversation_span_days,
-        "message_frequency_per_day": message_frequency,
-        "most_active_number": most_active_number,
-        "phone_number_usage": phone_usage
-    }
-    
-    return metadata
-
-def create_llm_conversation_file(contact_name, contact_data, messages, output_folder):
-    """
-    Create an LLM-ready conversation file for a single contact
-    """
-    # Apply LLM optimizations: grouping, cleaning, filtering
-    optimized_messages = optimize_messages_for_llm(messages)
-    
-    # Extract contact information
-    contact_info = {
-        "name": contact_name,
-        "phone_numbers": contact_data.get('phone_numbers', []),
-    }
-    
-    # Add additional contact context if available
-    if 'emails' in contact_data:
-        contact_info['emails'] = [email['address'] for email in contact_data['emails']]
-    
-    if 'organization' in contact_data:
-        contact_info['organization'] = contact_data['organization']
-    
-    if 'title' in contact_data:
-        contact_info['title'] = contact_data['title']
-    
-    # Generate conversation metadata (use optimized messages for stats)
-    conversation_metadata = generate_conversation_metadata(optimized_messages, contact_data)
-    
-    # Create the LLM-ready structure
-    llm_data = {
-        "contact": contact_info,
-        "conversation_metadata": conversation_metadata,
-        "messages": optimized_messages
-    }
-    
-    # Save inside the contact's folder instead of separate _llm_ready folder
-    safe_name = re.sub(r'[\\/*?:"<>|]', '_', contact_name)
-    contact_folder = os.path.join(output_folder, safe_name)
-    llm_file_path = os.path.join(contact_folder, 'conversation_llm.json')
-    
-    with open(llm_file_path, 'w', encoding='utf-8') as f:
-        json.dump(llm_data, f, indent=2, ensure_ascii=False)
-    
-    return llm_file_path, conversation_metadata
-
-def create_llm_master_files(llm_conversations_data, output_folder):
-    """
-    Create master index and summary files for LLM processing
-    """
-    llm_folder = os.path.join(output_folder, LLM_FOLDER)
-    os.makedirs(llm_folder, exist_ok=True)
-    
-    # Master Index - Full index of all conversations
-    master_index = {
-        "metadata": {
-            "total_conversations": len(llm_conversations_data),
-            "generated_at": "2025-01-15T06:06:00Z",
-            "format": "llm_ready_conversations",
-            "min_message_count": MIN_MESSAGE_COUNT
-        },
-        "conversations": []
-    }
-    
-    # Conversation Summaries - Quick stats for each conversation
-    conversation_summaries = {
-        "metadata": {
-            "total_conversations": len(llm_conversations_data),
-            "generated_at": "2025-01-15T06:06:00Z",
-            "format": "llm_conversation_summaries"
-        },
-        "summaries": []
-    }
-    
-    # Overall statistics
-    total_messages = 0
-    total_sent = 0
-    total_received = 0
-    most_active_contacts = []
-    
-    for contact_name, data in sorted(llm_conversations_data.items()):
-        file_path = data['file_path']
-        metadata = data['metadata']
-        
-        # Add to master index
-        index_entry = {
-            "contact_name": contact_name,
-            "file_path": file_path,
-            "phone_numbers": data['phone_numbers'],
-            "total_messages": metadata.get('total_messages', 0),
-            "date_range": metadata.get('date_range', 'Unknown'),
-            "most_active_number": metadata.get('most_active_number', 'Unknown')
-        }
-        
-        if 'emails' in data:
-            index_entry['emails'] = data['emails']
-        if 'organization' in data:
-            index_entry['organization'] = data['organization']
-        
-        master_index["conversations"].append(index_entry)
-        
-        # Add to conversation summaries
-        summary_entry = {
-            "contact_name": contact_name,
-            "conversation_metadata": metadata,
-            "file_path": file_path
-        }
-        conversation_summaries["summaries"].append(summary_entry)
-        
-        # Update overall stats
-        msg_count = metadata.get('total_messages', 0)
-        total_messages += msg_count
-        total_sent += metadata.get('sent_messages', 0)
-        total_received += metadata.get('received_messages', 0)
-        
-        most_active_contacts.append({
-            "name": contact_name,
-            "message_count": msg_count
-        })
-    
-    # Sort by most active
-    most_active_contacts.sort(key=lambda x: x['message_count'], reverse=True)
-    
-    # Add overall statistics to metadata
-    master_index["metadata"]["overall_stats"] = {
-        "total_messages_all_conversations": total_messages,
-        "total_sent_messages": total_sent,
-        "total_received_messages": total_received,
-        "average_messages_per_conversation": round(total_messages / len(llm_conversations_data), 1) if llm_conversations_data else 0,
-        "most_active_contacts": most_active_contacts[:10]  # Top 10
-    }
-    
-    # Write files
-    master_index_path = os.path.join(llm_folder, LLM_INDEX_FILE)
-    with open(master_index_path, 'w', encoding='utf-8') as f:
-        json.dump(master_index, f, indent=2, ensure_ascii=False)
-    
-    summaries_path = os.path.join(llm_folder, LLM_SUMMARIES_FILE)
-    with open(summaries_path, 'w', encoding='utf-8') as f:
-        json.dump(conversation_summaries, f, indent=2, ensure_ascii=False)
-    
-    return master_index_path, summaries_path
-
 def process_contact_for_llm(contact_name, phone_numbers, vcard, temp_export_dir, output_folder):
     """
     Process a single contact for LLM-ready format
@@ -1023,71 +870,6 @@ def process_contact_for_llm(contact_name, phone_numbers, vcard, temp_export_dir,
     
     return llm_file_path, llm_data
 
-def process_emojis_for_llm(content):
-    """
-    Process emojis for LLM optimization:
-    1. Convert emojis to text descriptions
-    2. Remove consecutive duplicate emojis
-    3. Clean up excessive emoji usage
-    """
-    if not content:
-        return content
-    
-    # Convert emojis to text descriptions first
-    content = emoji.demojize(content, delimiters=(":", ":"))
-    
-    # Reduce consecutive duplicate emoji descriptions BEFORE replacements
-    # This handles cases like :heart::heart::heart: → :heart:
-    content = re.sub(r'(:[\w_-]+:)(\1)+', r'\1', content)
-    
-    # Replace common emojis with shorter, LLM-friendly text
-    emoji_replacements = {
-        ':face_with_tears_of_joy:': '(laughing)',
-        ':red_heart:': '(heart)',
-        ':smiling_face_with_heart-eyes:': '(heart eyes)', 
-        ':thumbs_up:': '(thumbs up)',
-        ':thumbs_down:': '(thumbs down)',
-        ':fire:': '(fire)',
-        ':clapping_hands:': '(clapping)',
-        ':folded_hands:': '(praying)',
-        ':rolling_on_the_floor_laughing:': '(laughing)',
-        ':crying_face:': '(crying)',
-        ':smiling_face:': '',  # Remove simple smiles as they add little value
-        ':winking_face:': '',  # Remove simple winks
-        ':kissing_face:': '(kiss)',
-        ':thinking_face:': '(thinking)',
-        ':face_with_rolling_eyes:': '(eye roll)',
-        ':person_shrugging:': '(shrug)',
-        ':shrugging:': '(shrug)',
-        # Add some more common ones
-        ':grinning_face:': '',
-        ':beaming_face_with_smiling_eyes:': '',
-        ':star-struck:': '(amazed)',
-        ':partying_face:': '(party)'
-    }
-    
-    for emoji_code, replacement in emoji_replacements.items():
-        content = content.replace(emoji_code, replacement)
-    
-    # For remaining complex emoji descriptions, be more selective
-    # Remove very long/complex emoji descriptions
-    content = re.sub(r':[\w_-]{15,}:', '', content)  # Remove very long emoji descriptions
-    # Convert remaining medium-length emojis to simple tag
-    content = re.sub(r':[\w_-]+:', '(emoji)', content)
-    
-    # Clean up multiple consecutive (emoji) tags
-    content = re.sub(r'\(emoji\)\s*\(emoji\)+', '(emoji)', content)
-    
-    # Remove standalone (emoji) that don't add value
-    if content.strip() == '(emoji)':
-        return ''
-    
-    # Clean up extra spaces
-    content = ' '.join(content.split())
-    
-    return content
-
-def clean_message_content(content):
     """
     Clean message content for LLM processing by removing noise and stop words
     """
@@ -1145,7 +927,6 @@ def clean_message_content(content):
     
     return content.strip()
 
-def group_consecutive_messages(messages, time_window_minutes=10):
     """
     Group consecutive messages from the same sender within a time window
     """
@@ -1197,7 +978,6 @@ def group_consecutive_messages(messages, time_window_minutes=10):
     
     return grouped_messages
 
-def should_start_new_group(prev_timestamp, curr_timestamp, time_window_minutes):
     """
     Determine if we should start a new message group based on time gap
     """
@@ -1211,7 +991,6 @@ def should_start_new_group(prev_timestamp, curr_timestamp, time_window_minutes):
         # If we can't parse timestamps, start new group to be safe
         return True
 
-def is_content_similar(content1, content2, similarity_threshold=0.8):
     """
     Check if two pieces of content are too similar (to prevent duplication)
     """
@@ -1228,22 +1007,6 @@ def is_content_similar(content1, content2, similarity_threshold=0.8):
     
     return False
 
-def optimize_messages_for_llm(messages):
-    """
-    Apply all LLM optimizations: grouping, cleaning, and filtering
-    """
-    # First group consecutive messages
-    grouped = group_consecutive_messages(messages)
-    
-    # Filter out any remaining empty or very short messages
-    filtered = []
-    for msg in grouped:
-        content = msg.get('content', '').strip()
-        if len(content) >= 3:  # Keep messages with at least 3 characters
-            filtered.append(msg)
-    
-    return filtered
-
 if __name__ == "__main__":
     print("🚀 Starting Integrated Contacts & Messages Exporter v2 (JSON)")
     print("="*60)
@@ -1252,12 +1015,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export contacts and iMessage conversations to structured JSON format")
     parser.add_argument("vcf_file", nargs="?", help="Path to the VCF file to process. If not provided, will scan current directory")
     parser.add_argument("--min-messages", type=int, help=f"Minimum number of messages for a contact to be exported (default: {MIN_MESSAGE_COUNT})")
+    parser.add_argument("--disable-privacy", action="store_true", help="Disable privacy features for LLM data (don't anonymize sensitive information)")
     args = parser.parse_args()
     
     # Update minimum message count if provided
     if args.min_messages is not None:
         MIN_MESSAGE_COUNT = args.min_messages
         print(f"✓ Using minimum message count: {MIN_MESSAGE_COUNT}")
+    
+    # Update privacy setting if specified
+    if args.disable_privacy:
+        set_privacy_enabled(False)
+        print("⚠️ Privacy features disabled - LLM data will contain sensitive information")
+    else:
+        print(f"✓ Privacy features enabled - LLM data will be anonymized")
     
     # Check prerequisites
     if not check_imessage_exporter():
@@ -1274,7 +1045,7 @@ if __name__ == "__main__":
         else:
             print(f"❌ Error: Cannot find VCF file at '{provided_path}'")
             print("Please provide a valid .vcf file path.")
-            sys.exit(1)
+        sys.exit(1)
     
     # If no path was provided via command line, scan for vcf files
     if not vcf_path:
@@ -1310,6 +1081,9 @@ if __name__ == "__main__":
     print("• Standardize phone number formatting")
     print("• Create structured, machine-readable JSON files")
     print("• Create LLM-ready conversation format with message grouping & cleaning")
+    if ANONYMIZE_LLM_DATA:
+        print("• Anonymize sensitive data in LLM files (names, phone numbers, addresses)")
+        print("• Create mapping files for re-identification if needed")
     print("• Link message files to contact records")
     print("• Generate summary and index files in JSON")
     
