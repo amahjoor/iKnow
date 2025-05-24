@@ -5,6 +5,7 @@ import re
 import subprocess
 import shutil
 import json
+import argparse
 from dateutil.parser import parse
 from datetime import datetime, timedelta
 import emoji
@@ -1247,18 +1248,61 @@ if __name__ == "__main__":
     print("🚀 Starting Integrated Contacts & Messages Exporter v2 (JSON)")
     print("="*60)
     
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Export contacts and iMessage conversations to structured JSON format")
+    parser.add_argument("vcf_file", nargs="?", help="Path to the VCF file to process. If not provided, will scan current directory")
+    parser.add_argument("--min-messages", type=int, help=f"Minimum number of messages for a contact to be exported (default: {MIN_MESSAGE_COUNT})")
+    args = parser.parse_args()
+    
+    # Update minimum message count if provided
+    if args.min_messages is not None:
+        MIN_MESSAGE_COUNT = args.min_messages
+        print(f"✓ Using minimum message count: {MIN_MESSAGE_COUNT}")
+    
     # Check prerequisites
     if not check_imessage_exporter():
         sys.exit(1)
     
-    # Check VCF file
-    vcf_path = "all.vcf"
-    if not os.path.exists(vcf_path):
-        print(f"❌ Error: Could not find {vcf_path}")
-        print("Please make sure the file exists in the same directory as this script.")
-        sys.exit(1)
+    # Get VCF file - either from command line args or by scanning directory
+    vcf_path = None
     
-    print(f"✓ Found VCF file: {vcf_path}")
+    # Check if a file was provided as command line argument
+    if args.vcf_file:
+        provided_path = args.vcf_file
+        if os.path.exists(provided_path) and provided_path.lower().endswith('.vcf'):
+            vcf_path = provided_path
+        else:
+            print(f"❌ Error: Cannot find VCF file at '{provided_path}'")
+            print("Please provide a valid .vcf file path.")
+            sys.exit(1)
+    
+    # If no path was provided via command line, scan for vcf files
+    if not vcf_path:
+        vcf_files = [f for f in os.listdir('.') if f.lower().endswith('.vcf')]
+        
+        if not vcf_files:
+            print("❌ Error: No VCF files found in the current directory.")
+            print("Please provide a .vcf file in the same directory as this script or specify path as argument.")
+            sys.exit(1)
+        elif len(vcf_files) == 1:
+            vcf_path = vcf_files[0]
+        else:
+            print("📋 Multiple VCF files found. Please select one:")
+            for i, file in enumerate(vcf_files):
+                print(f"  {i+1}. {file} ({os.path.getsize(file) / (1024*1024):.2f} MB)")
+            
+            while True:
+                try:
+                    choice = int(input("\nEnter file number to use: "))
+                    if 1 <= choice <= len(vcf_files):
+                        vcf_path = vcf_files[choice-1]
+                        break
+                    else:
+                        print(f"Please enter a number between 1 and {len(vcf_files)}")
+                except ValueError:
+                    print("Please enter a valid number")
+    
+    print(f"✓ Using VCF file: {vcf_path}")
     print("\n🎯 This script will:")
     print("• Export all contacts to individual folders as JSON")
     print("• Export individual message conversations only (no group chats)")

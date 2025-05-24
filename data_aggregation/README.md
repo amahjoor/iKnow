@@ -47,11 +47,38 @@ Export your contacts and iMessage conversations to structured JSON format with i
 
 ### Usage
 
-1. **Place your VCF file** named `all.vcf` in this directory
-2. **Run the exporter**:
+1. **Prepare a VCF file** to process (exported from your Contacts app or other source)
+2. **Run the exporter** in one of these ways:
    ```bash
+   # Method 1: Run and it will auto-detect any .vcf files in current directory
    python contacts_exporter.py
+   
+   # Method 2: Specify a .vcf file path directly
+   python contacts_exporter.py path/to/your/contacts.vcf
+   
+   # Method 3: Specify a .vcf file and minimum message count
+   python contacts_exporter.py path/to/your/contacts.vcf --min-messages 5
    ```
+
+If multiple VCF files are found in the directory, you'll be prompted to select which one to use.
+
+### Command Line Options
+
+```
+usage: contacts_exporter.py [-h] [--min-messages MIN_MESSAGES] [vcf_file]
+
+Export contacts and iMessage conversations to structured JSON format
+
+positional arguments:
+  vcf_file              Path to the VCF file to process. If not provided, will
+                        scan current directory
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --min-messages MIN_MESSAGES
+                        Minimum number of messages for a contact to be exported
+                        (default: 10)
+```
 
 ## Configuration
 
