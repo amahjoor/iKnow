@@ -14,13 +14,27 @@ import emoji
 
 # Privacy Configuration for LLM Data
 ANONYMIZE_LLM_DATA = True  # Enable/disable privacy features
-PERSON_PLACEHOLDER = "[[PERSON]]"  # Placeholder for contact names
+PERSON_PLACEHOLDER_PREFIX = "[[PERSON_"  # Prefix for person placeholders (will become [[PERSON_1]], [[PERSON_2]], etc.)
 PHONE_PLACEHOLDER_PREFIX = "[[PHONE_"  # Prefix for phone number placeholders
 EMAIL_PLACEHOLDER_PREFIX = "[[EMAIL_"  # Prefix for email placeholders
-SOCIAL_PLACEHOLDER = "[[SOCIAL_MEDIA]]"  # Placeholder for social media handles/usernames
-ADDRESS_PLACEHOLDER = "[[ADDRESS]]"  # Placeholder for physical addresses
+SOCIAL_PLACEHOLDER_PREFIX = "[[SOCIAL_MEDIA_"  # Prefix for social media placeholders
+ORGANIZATION_PLACEHOLDER_PREFIX = "[[ORGANIZATION_"  # Prefix for organization placeholders
+ADDRESS_PLACEHOLDER_PREFIX = "[[ADDRESS_"  # Prefix for address placeholders
 PASSWORD_PLACEHOLDER = "[[CREDENTIALS]]"  # Placeholder for passwords and credentials
 PRIVACY_MAPPING_FILE = "privacy_mapping.json"  # File containing the mapping data
+
+# Global ID counters and mappings
+_person_id_counter = 0
+_person_name_to_id = {}  # Maps actual names to person IDs
+
+_organization_id_counter = 0
+_organization_to_id = {}  # Maps organization names to org IDs
+
+_social_media_id_counter = 0
+_social_media_to_id = {}  # Maps social media handles to social IDs
+
+_address_id_counter = 0
+_address_to_id = {}  # Maps addresses to address IDs
 
 # Regex patterns for sensitive data detection
 EMAIL_PATTERN = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
@@ -68,6 +82,147 @@ def set_privacy_enabled(enabled):
     """Set whether privacy features are enabled globally."""
     global ANONYMIZE_LLM_DATA
     ANONYMIZE_LLM_DATA = enabled
+
+
+def get_person_id(contact_name):
+    """
+    Get a unique person ID for a contact name, creating one if it doesn't exist.
+    This ensures the same person always gets the same ID across all files.
+    """
+    global _person_id_counter, _person_name_to_id
+    
+    if contact_name not in _person_name_to_id:
+        _person_id_counter += 1
+        _person_name_to_id[contact_name] = _person_id_counter
+    
+    return _person_name_to_id[contact_name]
+
+
+def get_person_placeholder(contact_name):
+    """
+    Get the privacy placeholder for a contact name (e.g., [[PERSON_1]])
+    """
+    if not ANONYMIZE_LLM_DATA:
+        return contact_name
+    
+    person_id = get_person_id(contact_name)
+    return f"{PERSON_PLACEHOLDER_PREFIX}{person_id}]]"
+
+
+def get_organization_id(org_name):
+    """
+    Get a unique organization ID for an organization name, creating one if it doesn't exist.
+    """
+    global _organization_id_counter, _organization_to_id
+    
+    if org_name not in _organization_to_id:
+        _organization_id_counter += 1
+        _organization_to_id[org_name] = _organization_id_counter
+    
+    return _organization_to_id[org_name]
+
+
+def get_organization_placeholder(org_name):
+    """
+    Get the privacy placeholder for an organization (e.g., [[ORGANIZATION_1]])
+    """
+    if not ANONYMIZE_LLM_DATA or not org_name:
+        return org_name
+    
+    org_id = get_organization_id(org_name)
+    return f"{ORGANIZATION_PLACEHOLDER_PREFIX}{org_id}]]"
+
+
+def get_social_media_id(handle):
+    """
+    Get a unique social media ID for a handle/username, creating one if it doesn't exist.
+    """
+    global _social_media_id_counter, _social_media_to_id
+    
+    if handle not in _social_media_to_id:
+        _social_media_id_counter += 1
+        _social_media_to_id[handle] = _social_media_id_counter
+    
+    return _social_media_to_id[handle]
+
+
+def get_social_media_placeholder(handle):
+    """
+    Get the privacy placeholder for a social media handle (e.g., [[SOCIAL_MEDIA_1]])
+    """
+    if not ANONYMIZE_LLM_DATA or not handle:
+        return handle
+    
+    social_id = get_social_media_id(handle)
+    return f"{SOCIAL_PLACEHOLDER_PREFIX}{social_id}]]"
+
+
+def get_address_id(address):
+    """
+    Get a unique address ID for an address, creating one if it doesn't exist.
+    """
+    global _address_id_counter, _address_to_id
+    
+    if address not in _address_to_id:
+        _address_id_counter += 1
+        _address_to_id[address] = _address_id_counter
+    
+    return _address_to_id[address]
+
+
+def get_address_placeholder(address):
+    """
+    Get the privacy placeholder for an address (e.g., [[ADDRESS_1]])
+    """
+    if not ANONYMIZE_LLM_DATA or not address:
+        return address
+    
+    address_id = get_address_id(address)
+    return f"{ADDRESS_PLACEHOLDER_PREFIX}{address_id}]]"
+
+
+def get_phone_placeholder(contact_name, phone_index):
+    """
+    Get the privacy placeholder for a phone number using hierarchical format (e.g., [[PHONE_74_1]])
+    """
+    if not ANONYMIZE_LLM_DATA:
+        return None
+    
+    person_id = get_person_id(contact_name)
+    return f"{PHONE_PLACEHOLDER_PREFIX}{person_id}_{phone_index}]]"
+
+
+def get_email_placeholder(contact_name, email_index):
+    """
+    Get the privacy placeholder for an email using hierarchical format (e.g., [[EMAIL_74_1]])
+    """
+    if not ANONYMIZE_LLM_DATA:
+        return None
+    
+    person_id = get_person_id(contact_name)
+    return f"{EMAIL_PLACEHOLDER_PREFIX}{person_id}_{email_index}]]"
+
+
+def reset_person_mapping():
+    """
+    Reset all global mappings. Useful for testing or when starting fresh.
+    """
+    global _person_id_counter, _person_name_to_id
+    global _organization_id_counter, _organization_to_id
+    global _social_media_id_counter, _social_media_to_id
+    global _address_id_counter, _address_to_id
+    
+    _person_id_counter = 0
+    _person_name_to_id = {}
+    
+    _organization_id_counter = 0
+    _organization_to_id = {}
+    
+    _social_media_id_counter = 0
+    _social_media_to_id = {}
+    
+    _address_id_counter = 0
+    _address_to_id = {}
 
 
 def process_emojis_for_llm(content):
@@ -307,6 +462,8 @@ def anonymize_data_for_llm(data, contact_name):
     # Create mapping dictionary to store original values
     mapping = {
         "name": contact_name,
+        "person_id": get_person_id(contact_name),  # Store the unique person ID
+        "person_placeholder": get_person_placeholder(contact_name),  # Store the placeholder used
         "phones": {},
         "emails": {},
         "organizations": {},
@@ -329,33 +486,33 @@ def anonymize_data_for_llm(data, contact_name):
         mapping["original_data"]["contact"] = json.loads(json.dumps(anonymized["contact"]))
         
         # Replace contact name with placeholder
-        anonymized["contact"]["name"] = PERSON_PLACEHOLDER
+        anonymized["contact"]["name"] = get_person_placeholder(contact_name)
         
         # Create unique placeholders for each phone number
         if "phone_numbers" in anonymized["contact"]:
             for i, phone in enumerate(anonymized["contact"]["phone_numbers"]):
-                placeholder = f"{PHONE_PLACEHOLDER_PREFIX}{i+1}]]"
+                placeholder = get_phone_placeholder(contact_name, i+1)
                 mapping["phones"][placeholder] = phone
                 anonymized["contact"]["phone_numbers"][i] = placeholder
         
         # Create unique placeholders for each email
         if "emails" in anonymized["contact"]:
             for i, email in enumerate(anonymized["contact"]["emails"]):
-                placeholder = f"{EMAIL_PLACEHOLDER_PREFIX}{i+1}]]"
+                placeholder = get_email_placeholder(contact_name, i+1)
                 mapping["emails"][placeholder] = email
                 anonymized["contact"]["emails"][i] = placeholder
         
         # Anonymize organization if present
         if "organization" in anonymized["contact"]:
-            org_placeholder = "[[ORGANIZATION]]"
+            org_placeholder = get_organization_placeholder(anonymized["contact"]["organization"])
             mapping["organizations"][org_placeholder] = anonymized["contact"]["organization"]
             anonymized["contact"]["organization"] = org_placeholder
         
         # Remove addresses if present
         if "addresses" in anonymized["contact"]:
-            addr_placeholder = ADDRESS_PLACEHOLDER
             for i, address in enumerate(anonymized["contact"]["addresses"]):
-                mapping["addresses"][f"{addr_placeholder}_{i+1}"] = address
+                addr_placeholder = get_address_placeholder(address)
+                mapping["addresses"][addr_placeholder] = address
             del anonymized["contact"]["addresses"]
     
     # Anonymize phone numbers in conversation metadata
@@ -374,7 +531,7 @@ def anonymize_data_for_llm(data, contact_name):
                     break
                     
             if not placeholder:
-                placeholder = f"{PHONE_PLACEHOLDER_PREFIX}{len(mapping['phones'])+1}]]"
+                placeholder = get_phone_placeholder(contact_name, len(mapping['phones'])+1)
                 mapping["phones"][placeholder] = phone
                 
             anonymized["conversation_metadata"]["most_active_number"] = placeholder
@@ -391,7 +548,7 @@ def anonymize_data_for_llm(data, contact_name):
                         break
                         
                 if not placeholder:
-                    placeholder = f"{PHONE_PLACEHOLDER_PREFIX}{len(mapping['phones'])+1}]]"
+                    placeholder = get_phone_placeholder(contact_name, len(mapping['phones'])+1)
                     mapping["phones"][placeholder] = phone
                     
                 phone_usage[placeholder] = count
@@ -406,14 +563,14 @@ def anonymize_data_for_llm(data, contact_name):
                 content = msg["content"]
                 
                 # Replace the full contact name with placeholder (case-insensitive)
-                content = re.sub(re.escape(contact_name), PERSON_PLACEHOLDER, content, flags=re.IGNORECASE)
+                content = re.sub(re.escape(contact_name), get_person_placeholder(contact_name), content, flags=re.IGNORECASE)
                 
                 # Replace just the first name if it's different from the full name
                 # Use word boundary to avoid replacing partial matches
                 if first_name and first_name != contact_name and len(first_name) > 1:
                     # Create pattern that matches the first name as a whole word (case-insensitive)
                     pattern = r'\b' + re.escape(first_name) + r'\b'
-                    content = re.sub(pattern, PERSON_PLACEHOLDER, content, flags=re.IGNORECASE)
+                    content = re.sub(pattern, get_person_placeholder(contact_name), content, flags=re.IGNORECASE)
                 
                 # Replace organization names in content if present
                 for org_placeholder, org_value in mapping["organizations"].items():
@@ -439,7 +596,7 @@ def anonymize_data_for_llm(data, contact_name):
                             break
                     
                     if not existing:
-                        placeholder = f"{PHONE_PLACEHOLDER_PREFIX}{len(mapping['phones'])+1}]]"
+                        placeholder = get_phone_placeholder(contact_name, len(mapping['phones'])+1)
                         mapping["phones"][placeholder] = phone_match
                         content = content.replace(phone_match, placeholder)
                 
@@ -454,7 +611,7 @@ def anonymize_data_for_llm(data, contact_name):
                             break
                     
                     if not existing:
-                        placeholder = f"{EMAIL_PLACEHOLDER_PREFIX}{len(mapping['emails'])+1}]]"
+                        placeholder = get_email_placeholder(contact_name, len(mapping['emails'])+1)
                         mapping["emails"][placeholder] = email_match
                         content = content.replace(email_match, placeholder)
                 
@@ -469,7 +626,7 @@ def anonymize_data_for_llm(data, contact_name):
                             break
                     
                     if not already_handled:
-                        placeholder = f"{EMAIL_PLACEHOLDER_PREFIX}{len(mapping['emails'])+1}]]"
+                        placeholder = get_email_placeholder(contact_name, len(mapping['emails'])+1)
                         mapping["emails"][placeholder] = partial_email_match
                         content = content.replace(partial_email_match, placeholder)
                 
@@ -480,8 +637,8 @@ def anonymize_data_for_llm(data, contact_name):
                         full_match = re.search(f"({pattern})", content)
                         if full_match:
                             full_text = full_match.group(0)
-                            placeholder = SOCIAL_PLACEHOLDER
-                            mapping["social_media"][placeholder + "_" + social_match] = full_text
+                            placeholder = get_social_media_placeholder(social_match)
+                            mapping["social_media"][placeholder] = full_text
                             content = content.replace(full_text, placeholder)
                 
                 # Find and replace directly mentioned usernames using enhanced patterns
@@ -490,20 +647,9 @@ def anonymize_data_for_llm(data, contact_name):
                         username_matches = re.findall(pattern, content, re.IGNORECASE)
                         for username in username_matches:
                             if username:
-                                # Extract the platform hint from the pattern name
-                                platform_hint = ""
-                                for platform in ["github", "twitter", "instagram", "facebook", "linkedin", "discord", "telegram"]:
-                                    if platform in pattern:
-                                        platform_hint = platform
-                                        break
-                                
-                                # Create a meaningful key with platform if available
-                                if platform_hint:
-                                    key = f"{SOCIAL_PLACEHOLDER}_{platform_hint}_{len(mapping['social_media'])+1}"
-                                else:
-                                    key = f"{SOCIAL_PLACEHOLDER}_{len(mapping['social_media'])+1}"
-                                
-                                mapping["social_media"][key] = username
+                                # Get unique placeholder for this username
+                                placeholder = get_social_media_placeholder(username)
+                                mapping["social_media"][placeholder] = username
                                 
                                 # Create the regex to find the exact match including context
                                 context_pattern = pattern.replace("([A-Za-z0-9", "([A-Za-z0-9")  # Ensure we match the same pattern
@@ -511,7 +657,7 @@ def anonymize_data_for_llm(data, contact_name):
                                 
                                 if match_with_context:
                                     full_match = match_with_context.group(0)
-                                    replacement = full_match.replace(username, SOCIAL_PLACEHOLDER)
+                                    replacement = full_match.replace(username, placeholder)
                                     content = content.replace(full_match, replacement)
                     except Exception as e:
                         # If there's an error with a particular pattern, continue with other patterns
@@ -680,6 +826,10 @@ def create_llm_master_files(llm_conversations_data, output_folder, min_message_c
             "total_conversations": len(llm_conversations_data),
             "generated_at": datetime.now().isoformat()
         },
+        "global_person_mapping": _person_name_to_id,  # Include the global person ID mapping
+        "global_organization_mapping": _organization_to_id,  # Include organization mappings
+        "global_social_media_mapping": _social_media_to_id,  # Include social media mappings  
+        "global_address_mapping": _address_to_id,  # Include address mappings
         "mappings": {}
     }
     
@@ -693,7 +843,7 @@ def create_llm_master_files(llm_conversations_data, output_folder, min_message_c
         file_path = data['file_path']
         metadata = data['metadata']
         
-        index_name = PERSON_PLACEHOLDER if ANONYMIZE_LLM_DATA else contact_name
+        index_name = get_person_placeholder(contact_name) if ANONYMIZE_LLM_DATA else contact_name
         
         # Add to master index
         index_entry = {
@@ -708,19 +858,19 @@ def create_llm_master_files(llm_conversations_data, output_folder, min_message_c
             if 'phone_numbers' in data:
                 anonymized_phones = []
                 for i, _ in enumerate(data['phone_numbers']):
-                    anonymized_phones.append(f"{PHONE_PLACEHOLDER_PREFIX}{i+1}]]")
+                    anonymized_phones.append(get_phone_placeholder(contact_name, i+1))
                 index_entry['phone_numbers'] = anonymized_phones
             
             # Use placeholders for emails if present
             if 'emails' in data:
                 anonymized_emails = []
                 for i, _ in enumerate(data['emails']):
-                    anonymized_emails.append(f"{EMAIL_PLACEHOLDER_PREFIX}{i+1}]]")
+                    anonymized_emails.append(get_email_placeholder(contact_name, i+1))
                 index_entry['emails'] = anonymized_emails
             
             # Use placeholder for most active number
             if metadata.get('most_active_number'):
-                index_entry['most_active_number'] = f"{PHONE_PLACEHOLDER_PREFIX}1]]"
+                index_entry['most_active_number'] = get_phone_placeholder(contact_name, 1)
         else:
             # Use real data
             if 'phone_numbers' in data:
@@ -745,11 +895,11 @@ def create_llm_master_files(llm_conversations_data, output_folder, min_message_c
         if ANONYMIZE_LLM_DATA:
             anonymized_metadata = json.loads(json.dumps(metadata))
             if 'most_active_number' in anonymized_metadata:
-                anonymized_metadata['most_active_number'] = f"{PHONE_PLACEHOLDER_PREFIX}1]]"
+                anonymized_metadata['most_active_number'] = get_phone_placeholder(contact_name, 1)
             if 'phone_number_usage' in anonymized_metadata:
                 phone_usage = {}
                 for i, (_, count) in enumerate(anonymized_metadata['phone_number_usage'].items()):
-                    phone_usage[f"{PHONE_PLACEHOLDER_PREFIX}{i+1}]]"] = count
+                    phone_usage[get_phone_placeholder(contact_name, i+1)] = count
                 anonymized_metadata['phone_number_usage'] = phone_usage
             summary_entry["conversation_metadata"] = anonymized_metadata
         else:

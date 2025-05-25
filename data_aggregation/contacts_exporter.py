@@ -17,6 +17,7 @@ from llm_privacy import (
     create_llm_master_files,
     optimize_messages_for_llm,
     generate_conversation_metadata,
+    reset_person_mapping,
     ANONYMIZE_LLM_DATA
 )
 
@@ -549,6 +550,9 @@ def create_summary_files(contact_data, output_folder):
 
 def process_vcard_data(vcard_data):
     try:
+        # Reset person mapping for clean ID assignment
+        reset_person_mapping()
+        
         vcards = vobject.readComponents(vcard_data)
         
         # Create main output folder
