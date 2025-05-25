@@ -136,9 +136,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const getFrequencyLabel = (frequency: number): string => {
     if (frequency >= 5) return 'Multiple daily';
     if (frequency >= 1) return 'Daily';
-    if (frequency >= 0.14) return 'Weekly'; // ~1 per week
-    if (frequency >= 0.03) return 'Monthly'; // ~1 per month
-    if (frequency >= 0.008) return 'Quarterly'; // ~1 per 3 months
+    if (frequency >= 0.14) return 'Weekly'; // ~1 per week (1/7 = 0.143)
+    if (frequency >= 0.03) return 'Monthly'; // ~1 per month (1/30 = 0.033)
+    if (frequency >= 0.008) return 'Quarterly'; // ~1 per quarter (1/120 = 0.008)
     return 'Rarely';
   };
 
@@ -1187,14 +1187,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           {/* Frequency markers */}
                           <div className="flex justify-between mt-1 text-xs text-gray-400">
                             <span>0</span>
-                            <span>0.03</span>
-                            <span>0.14</span>
-                            <span>1</span>
+                            <span>{maxFrequency.toFixed(1) * 0.2}</span>
+                            <span>{maxFrequency.toFixed(1) * 0.4}</span>
+                            <span>{maxFrequency.toFixed(1) * 0.6}</span>
+                            <span>{maxFrequency.toFixed(1) * 0.8}</span>
                             <span>{maxFrequency.toFixed(1)}</span>
                           </div>
                         </div>
                         <span className="text-xs text-gray-500 w-12 text-right">
-                          Daily+
+                          Multiple
                         </span>
                       </div>
                       <div className="mt-2 text-xs text-gray-600 text-center">

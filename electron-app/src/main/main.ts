@@ -275,8 +275,7 @@ ipcMain.handle('load-contacts-from-originals', async () => {
             contact_name: contactData.name,
             phone_numbers: phoneNumbers,
             emails,
-            organization:
-              contactData.professional_information?.organization,
+            organization: contactData.professional_information?.organization,
             total_messages:
               contactData.conversation_insights?.total_messages || 0,
             date_range:
@@ -313,7 +312,8 @@ ipcMain.handle('load-contacts-from-originals', async () => {
     };
   } catch (error) {
     console.error('Error loading contacts from originals:', error);
-    const { message } = error instanceof Error ? error : { message: 'Unknown error' };
+    const { message } =
+      error instanceof Error ? error : { message: 'Unknown error' };
     return {
       success: false,
       error: message,

@@ -50,13 +50,14 @@ Export your contacts and iMessage conversations to structured JSON format with i
 
 1. **Prepare a VCF file** to process (exported from your Contacts app or other source)
 2. **Run the exporter** in one of these ways:
+
    ```bash
    # Method 1: Run and it will auto-detect any .vcf files in current directory
    python contacts_exporter.py
-   
+
    # Method 2: Specify a .vcf file path directly
    python contacts_exporter.py path/to/your/contacts.vcf
-   
+
    # Method 3: Specify a .vcf file and minimum message count
    python contacts_exporter.py path/to/your/contacts.vcf --min-messages 5
    ```
@@ -81,7 +82,7 @@ optional arguments:
                         (default: 10)
   --disable-privacy     Disable privacy features for LLM data (don't anonymize
                         sensitive information)
-   ```
+```
 
 ## Configuration
 
@@ -125,8 +126,12 @@ A separate mapping file (`privacy_mapping.json`) is created for each contact, co
     "[[PHONE_2]]": "+15559876543"
   },
   "original_data": {
-    "contact": { /* original contact information */ },
-    "metadata": { /* original conversation metadata */ }
+    "contact": {
+      /* original contact information */
+    },
+    "metadata": {
+      /* original conversation metadata */
+    }
   }
 }
 ```

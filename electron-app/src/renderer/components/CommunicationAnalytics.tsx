@@ -60,16 +60,12 @@ export const CommunicationAnalytics: React.FC<CommunicationAnalyticsProps> = ({
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis 
-                dataKey="hour" 
-                interval={2}
-                fontSize={12}
-              />
+              <XAxis dataKey="hour" interval={2} fontSize={12} />
               <YAxis fontSize={12} />
-              <Tooltip 
+              <Tooltip
                 formatter={(value, name) => [
                   value,
-                  name === 'userMessages' ? 'You' : contactName
+                  name === 'userMessages' ? 'You' : contactName,
                 ]}
                 labelFormatter={(label) => `Time: ${label}`}
               />
@@ -96,12 +92,12 @@ export const CommunicationAnalytics: React.FC<CommunicationAnalyticsProps> = ({
         {/* Peak Hours Summary */}
         <div className="flex flex-wrap gap-2 mt-4">
           <span className="text-sm font-medium text-gray-700">Peak hours:</span>
-          {hours.peakHours.map(({ hour, count }) => (
+          {hours.peakHours.overall.map((hour) => (
             <span
               key={hour}
               className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800"
             >
-              {getHourLabel(hour)} ({count} msgs)
+              {getHourLabel(hour)}
             </span>
           ))}
         </div>
@@ -116,161 +112,157 @@ export const CommunicationAnalytics: React.FC<CommunicationAnalyticsProps> = ({
           Message volume over time, showing who initiates conversations
         </p>
 
-        {/* Monthly Trends */}
-        <div className="mb-6">
-          <h4 className="text-lg font-semibold text-gray-800 mb-3">Monthly Activity</h4>
-          <div className="space-y-2">
-            {trends.monthlyData.slice(-6).map((month) => {
-              const maxMessages = Math.max(month.userMessages, month.contactMessages);
-              const userWidth = maxMessages > 0 ? (month.userMessages / maxMessages) * 100 : 0;
-              const contactWidth = maxMessages > 0 ? (month.contactMessages / maxMessages) * 100 : 0;
-
-              return (
-                <div key={month.month} className="flex items-center space-x-3">
-                  <div className="w-16 text-sm font-medium text-gray-600">
-                    {new Date(month.month + '-01').toLocaleDateString('en-US', {
-                      month: 'short',
-                      year: '2-digit',
-                    })}
-                  </div>
-                  <div className="flex-1 relative h-8 bg-gray-100 rounded-lg overflow-hidden">
-                    <div
-                      className="absolute left-0 top-0 h-full bg-blue-500 opacity-80"
-                      style={{ width: `${userWidth}%` }}
-                      title={`You: ${month.userMessages} messages`}
-                    />
-                    <div
-                      className="absolute right-0 top-0 h-full bg-green-500 opacity-80"
-                      style={{ width: `${contactWidth}%` }}
-                      title={`${contactName}: ${month.contactMessages} messages`}
-                    />
-                    <div className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-700">
-                      {month.total} total
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="flex items-center justify-center space-x-4 mt-3 text-xs">
-            <div className="flex items-center space-x-1">
-              <div className="w-3 h-3 bg-blue-500 rounded"></div>
-              <span>You</span>
-            </div>
-            <div className="flex items-center space-x-1">
-              <div className="w-3 h-3 bg-green-500 rounded"></div>
-              <span>{contactName}</span>
-            </div>
-          </div>
+        <div className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={trends.monthlyData.slice(-12)}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="month"
+                tickFormatter={(value) => {
+                  const date = new Date(value + '-01');
+                  return date.toLocaleDateString('en-US', {
+                    month: 'short',
+                    year: '2-digit',
+                  });
+                }}
+                fontSize={12}
+              />
+              <YAxis fontSize={12} />
+              <Tooltip
+                formatter={(value, name) => [
+                  value,
+                  name === 'userMessages' ? 'You' : contactName,
+                ]}
+                labelFormatter={(label) => {
+                  const date = new Date(label + '-01');
+                  return date.toLocaleDateString('en-US', {
+                    month: 'long',
+                    year: 'numeric',
+                  });
+                }}
+              />
+              <Line
+                type="monotone"
+                dataKey="userMessages"
+                stroke="#10b981"
+                strokeWidth={3}
+              />
+              <Line
+                type="monotone"
+                dataKey="contactMessages"
+                stroke="#f59e0b"
+                strokeWidth={3}
+              />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Response Time Patterns */}
+      {/* Response Time Patterns - Now Read Receipt Analytics */}
       <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200">
         <h3 className="text-xl font-bold text-gray-900 mb-4">
-          ⚡ Response Time Patterns
+          📖 Message Read Patterns
         </h3>
         <p className="text-sm text-gray-600 mb-6">
-          How quickly you and {contactName} respond to each other
+          How quickly messages are read based on when they're sent
         </p>
 
-        {/* Average Response Times */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          <div className="bg-blue-50 rounded-lg p-4">
-            <div className="text-sm font-medium text-blue-800 mb-1">Your Average Response</div>
-            <div className="text-2xl font-bold text-blue-900">
-              {formatResponseTime(responsePatterns.averageResponseTime.user)}
-            </div>
+        {/* Read Time by Send Hour Chart */}
+        <div className="mb-8">
+          <h4 className="text-lg font-semibold text-gray-800 mb-4">
+            Read Time by Send Hour
+          </h4>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={responsePatterns.readTimeByHour}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="hour" tickFormatter={(hour) => `${hour}:00`} />
+                <YAxis
+                  tickFormatter={(minutes) => {
+                    if (minutes >= 60) {
+                      return `${Math.round(minutes / 60)}h`;
+                    }
+                    return `${Math.round(minutes)}m`;
+                  }}
+                />
+                <Tooltip
+                  formatter={(value: number, name: string) => {
+                    if (value >= 60) {
+                      const readHours = Math.floor(value / 60);
+                      const mins = Math.round(value % 60);
+                      const label =
+                        name === 'userAverageReadTime'
+                          ? `${contactName} reads your messages`
+                          : `You read ${contactName}'s messages`;
+                      return [`${readHours}h ${mins}m`, label];
+                    }
+                    const label =
+                      name === 'userAverageReadTime'
+                        ? `${contactName} reads your messages`
+                        : `You read ${contactName}'s messages`;
+                    return [`${Math.round(value)}m`, label];
+                  }}
+                  labelFormatter={(hour) => `Messages sent at ${hour}:00`}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="userAverageReadTime"
+                  stroke="#3b82f6"
+                  strokeWidth={2}
+                  dot={{ fill: '#3b82f6', strokeWidth: 2, r: 4 }}
+                  name="userAverageReadTime"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="contactAverageReadTime"
+                  stroke="#10b981"
+                  strokeWidth={2}
+                  dot={{ fill: '#10b981', strokeWidth: 2, r: 4 }}
+                  name="contactAverageReadTime"
+                />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
-          <div className="bg-green-50 rounded-lg p-4">
-            <div className="text-sm font-medium text-green-800 mb-1">
-              {contactName}'s Average Response
+
+          {/* Legend */}
+          <div className="flex justify-center gap-6 mt-4">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 bg-blue-500 rounded-full" />
+              <span className="text-sm text-gray-600">
+                How long {contactName} takes to read your messages
+              </span>
             </div>
-            <div className="text-2xl font-bold text-green-900">
-              {formatResponseTime(responsePatterns.averageResponseTime.contact)}
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 bg-green-500 rounded-full" />
+              <span className="text-sm text-gray-600">
+                How long you take to read {contactName}&apos;s messages
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Response Time Distribution */}
-        <div className="mb-6">
-          <h4 className="text-lg font-semibold text-gray-800 mb-3">Response Speed Distribution</h4>
-          <div className="space-y-3">
-            {Object.entries(responsePatterns.responseTimeDistribution).map(([category, data]) => {
-              const categoryLabels = {
-                immediate: 'Immediate (< 5 min)',
-                quick: 'Quick (5-30 min)',
-                moderate: 'Moderate (30min-2hr)',
-                slow: 'Slow (2hr-24hr)',
-                delayed: 'Delayed (> 24hr)',
-              };
-
-              const total = data.user + data.contact;
-              const userPercentage = total > 0 ? (data.user / total) * 100 : 0;
-              const contactPercentage = total > 0 ? (data.contact / total) * 100 : 0;
-
-              return (
-                <div key={category} className="flex items-center space-x-3">
-                  <div className="w-32 text-sm font-medium text-gray-600">
-                    {categoryLabels[category as keyof typeof categoryLabels]}
-                  </div>
-                  <div className="flex-1 relative h-6 bg-gray-100 rounded-lg overflow-hidden">
-                    <div
-                      className="absolute left-0 top-0 h-full bg-blue-500"
-                      style={{ width: `${userPercentage}%` }}
-                      title={`You: ${data.user} responses`}
-                    />
-                    <div
-                      className="absolute right-0 top-0 h-full bg-green-500"
-                      style={{ width: `${contactPercentage}%` }}
-                      title={`${contactName}: ${data.contact} responses`}
-                    />
-                    {total > 0 && (
-                      <div className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-700">
-                        {total}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Response Time by Hour */}
-        <div>
-          <h4 className="text-lg font-semibold text-gray-800 mb-3">Response Time by Hour</h4>
-          <div className="grid grid-cols-12 gap-1">
-            {responsePatterns.responseTimeByHour.map(({ hour, avgUserResponse, avgContactResponse }) => {
-              const maxResponse = Math.max(avgUserResponse, avgContactResponse);
-              const userHeight = maxResponse > 0 ? (avgUserResponse / maxResponse) * 100 : 0;
-              const contactHeight = maxResponse > 0 ? (avgContactResponse / maxResponse) * 100 : 0;
-
-              return (
-                <div key={hour} className="flex flex-col items-center space-y-1">
-                  <div className="h-20 w-full relative bg-gray-100 rounded-t">
-                    {userHeight > 0 && (
-                      <div
-                        className="absolute bottom-0 left-0 w-1/2 bg-blue-500 rounded-tl"
-                        style={{ height: `${userHeight}%` }}
-                        title={`You: ${formatResponseTime(avgUserResponse)}`}
-                      />
-                    )}
-                    {contactHeight > 0 && (
-                      <div
-                        className="absolute bottom-0 right-0 w-1/2 bg-green-500 rounded-tr"
-                        style={{ height: `${contactHeight}%` }}
-                        title={`${contactName}: ${formatResponseTime(avgContactResponse)}`}
-                      />
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-500">{hour}</div>
-                </div>
-              );
-            })}
+        {/* Summary Stats */}
+        <div className="pt-4 border-t border-gray-200">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="text-center">
+              <div className="text-lg font-semibold text-gray-900">
+                {formatResponseTime(responsePatterns.userAvgResponseTime)}
+              </div>
+              <div className="text-sm text-gray-600">
+                Your avg response time
+              </div>
+            </div>
+            <div className="text-center">
+              <div className="text-lg font-semibold text-gray-900">
+                {formatResponseTime(responsePatterns.contactAvgResponseTime)}
+              </div>
+              <div className="text-sm text-gray-600">
+                {contactName}&apos;s avg response time
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
   );
-}; 
+};

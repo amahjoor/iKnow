@@ -1,3 +1,3 @@
 # iKnow
 
-A relationship management system for your iPhone contacts. 
+A relationship management system for your iPhone contacts.

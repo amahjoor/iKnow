@@ -90,9 +90,13 @@ export interface ContactWithSummary {
 // Types for parsed chat messages
 export interface ParsedMessage {
   timestamp: Date;
-  sender: 'user' | 'contact';
+  sender: 'me' | 'contact';
   content: string;
   type?: 'text' | 'media' | 'system';
+  readReceipt?: {
+    readBy: 'them' | 'you';
+    readTimeText: string;
+  };
 }
 
 export interface ChatData {

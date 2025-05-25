@@ -9,8 +9,9 @@ import {
 
 export const loadContactsData = async (): Promise<ContactsData | null> => {
   try {
-    const response =
-      await window.electron.ipcRenderer.invoke('load-contacts-from-originals');
+    const response = await window.electron.ipcRenderer.invoke(
+      'load-contacts-from-originals',
+    );
     if (response.success) {
       return response.data as ContactsData;
     }
@@ -324,21 +325,26 @@ export const parseMessages = (
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
 
-    // Look for date/time pattern (e.g., "Jun 07, 2024  4:46:59 PM")
+    // Look for date/time pattern with optional read receipt (e.g., "Jun 07, 2024  4:46:59 PM (Read by them after 1 minute, 5 seconds)")
     const timestampRegex =
-      /^[A-Za-z]{3}\s+\d{1,2},\s+\d{4}\s+\d{1,2}:\d{2}:\d{2}\s+(AM|PM)/;
+      /^([A-Za-z]{3}\s+\d{1,2},\s+\d{4}\s+\d{1,2}:\d{2}:\d{2}\s+(?:AM|PM))(?:\s+\(Read by (them|you) after (.+?)\))?/;
 
-    if (timestampRegex.test(line)) {
+    const timestampMatch = line.match(timestampRegex);
+    if (timestampMatch) {
       // Parse the timestamp
-      const timestamp = new Date(line);
+      const timestampStr = timestampMatch[1];
+      const timestamp = new Date(timestampStr);
+
+      // Extract read receipt info if present
+      const readBy = timestampMatch[2]; // "them" or "you" or undefined
+      const readTimeText = timestampMatch[3]; // "1 minute, 5 seconds" or undefined
 
       // Check if next line exists and contains sender info
       if (i + 1 < lines.length) {
         const senderLine = lines[i + 1].trim();
 
-        // Skip read receipt lines and other metadata
+        // Skip other metadata lines but not read receipts (we already captured them)
         if (
-          senderLine.includes('(Read by') ||
           senderLine.includes('Tapbacks:') ||
           senderLine.includes('This message responded')
         ) {
@@ -347,7 +353,7 @@ export const parseMessages = (
 
         // Determine sender - either "Me" or phone number
         const isFromUser = senderLine === 'Me';
-        const sender: 'user' | 'contact' = isFromUser ? 'user' : 'contact';
+        const sender: 'me' | 'contact' = isFromUser ? 'me' : 'contact';
 
         // Look for message content (could be on the next line or lines after)
         let messageContent = '';
@@ -385,12 +391,22 @@ export const parseMessages = (
 
         // Only add if we have actual message content
         if (messageContent) {
-          messages.push({
+          const message: ParsedMessage = {
             timestamp,
             sender,
             content: messageContent,
             type: 'text',
-          });
+          };
+
+          // Add read receipt data if present
+          if (readBy && readTimeText) {
+            message.readReceipt = {
+              readBy,
+              readTimeText,
+            };
+          }
+
+          messages.push(message);
         }
 
         // Skip ahead to avoid reprocessing lines

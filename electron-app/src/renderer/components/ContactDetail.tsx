@@ -38,7 +38,7 @@ export const ContactDetail: React.FC<ContactDetailProps> = ({
   const [viewMode, setViewMode] = useState<'ai' | 'chat'>('ai'); // Toggle between AI insights and chat history
   const [showGlobalAnalysis, setShowGlobalAnalysis] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
-  
+
   // Analytics state
   const [communicationHours, setCommunicationHours] =
     useState<CommunicationHours | null>(null);
@@ -77,13 +77,15 @@ export const ContactDetail: React.FC<ContactDetailProps> = ({
       try {
         const data = await loadConversationData(contact.contact_name);
         setConversationData(data);
-        
+
         // Calculate analytics if conversation data is available
         if (data && data.messages.length > 0) {
           const hours = analyzeCommunicationHours(data);
           const trends = analyzeCommunicationTrends(data);
-          const patterns = analyzeResponseTimePatterns(data);
-          
+          const patterns = await analyzeResponseTimePatterns(
+            contact.contact_name,
+          );
+
           setCommunicationHours(hours);
           setCommunicationTrends(trends);
           setResponsePatterns(patterns);

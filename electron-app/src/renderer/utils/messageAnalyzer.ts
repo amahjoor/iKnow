@@ -200,11 +200,15 @@ export interface MessageAnalysis {
 }
 
 export interface CommunicationHours {
-  hourlyDistribution: number[]; // 24 hours, count of messages per hour
-  userHourlyDistribution: number[]; // 24 hours, count of user messages per hour
-  contactHourlyDistribution: number[]; // 24 hours, count of contact messages per hour
-  peakHours: { hour: number; count: number }[];
-  mostActiveHour: number;
+  hourlyDistribution: { hour: number; count: number }[];
+  userHourlyDistribution: { hour: number; count: number }[];
+  contactHourlyDistribution: { hour: number; count: number }[];
+  peakHours: {
+    user: number[];
+    contact: number[];
+    overall: number[];
+  };
+  totalMessages: number;
 }
 
 export interface CommunicationTrends {
@@ -228,23 +232,30 @@ export interface CommunicationTrends {
   }[];
 }
 
+export interface ReadTimeByHour {
+  hour: number;
+  userAverageReadTime: number; // in minutes - how long it takes for user's messages to be read
+  contactAverageReadTime: number; // in minutes - how long it takes for contact's messages to be read
+  userMessageCount: number;
+  contactMessageCount: number;
+}
+
+export interface ReadTimeDistribution {
+  under15min: number;
+  min15to1hr: number;
+  hr1to4hr: number;
+  hr4to1day: number;
+  over1day: number;
+  neverRead: number;
+}
+
 export interface ResponseTimePatterns {
-  averageResponseTime: {
-    user: number; // in minutes
-    contact: number; // in minutes
-  };
-  responseTimeDistribution: {
-    immediate: { user: number; contact: number }; // < 5 min
-    quick: { user: number; contact: number }; // 5-30 min
-    moderate: { user: number; contact: number }; // 30min-2hr
-    slow: { user: number; contact: number }; // 2hr-24hr
-    delayed: { user: number; contact: number }; // > 24hr
-  };
-  responseTimeByHour: {
-    hour: number;
-    avgUserResponse: number;
-    avgContactResponse: number;
-  }[];
+  userAvgResponseTime: number;
+  contactAvgResponseTime: number;
+  userResponseTimes: number[];
+  contactResponseTimes: number[];
+  readTimeByHour: ReadTimeByHour[];
+  readTimeDistribution: ReadTimeDistribution;
 }
 
 // Clean and normalize text
@@ -512,7 +523,7 @@ export const analyzeCommunicationHours = (
   conversationData.messages.forEach((message) => {
     const hour = new Date(message.timestamp).getHours();
     hourlyDistribution[hour]++;
-    
+
     if (message.sender === 'me') {
       userHourlyDistribution[hour]++;
     } else {
@@ -521,19 +532,36 @@ export const analyzeCommunicationHours = (
   });
 
   // Find peak hours (top 3)
-  const peakHours = hourlyDistribution
+  const overallPeakHours = hourlyDistribution
     .map((count, hour) => ({ hour, count }))
     .sort((a, b) => b.count - a.count)
-    .slice(0, 3);
+    .slice(0, 3)
+    .map((item) => item.hour);
 
-  const mostActiveHour = peakHours[0]?.hour || 0;
+  const userPeakHours = userHourlyDistribution
+    .map((count, hour) => ({ hour, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3)
+    .map((item) => item.hour);
+
+  const contactPeakHours = contactHourlyDistribution
+    .map((count, hour) => ({ hour, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3)
+    .map((item) => item.hour);
+
+  const peakHours = {
+    user: userPeakHours,
+    contact: contactPeakHours,
+    overall: overallPeakHours,
+  };
 
   return {
     hourlyDistribution,
     userHourlyDistribution,
     contactHourlyDistribution,
     peakHours,
-    mostActiveHour,
+    totalMessages: conversationData.messages.length,
   };
 };
 
@@ -612,104 +640,197 @@ export const analyzeCommunicationTrends = (
   };
 };
 
-export const analyzeResponseTimePatterns = (
-  conversationData: ConversationData,
-): ResponseTimePatterns => {
-  const messages = conversationData.messages.sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+export const analyzeResponseTimePatterns = async (
+  contactName: string,
+): Promise<ResponseTimePatterns> => {
+  // Load raw messages to get read receipt data
+  const rawMessages = await loadChatMessages(contactName);
+  if (!rawMessages) {
+    // Return empty data if no messages
+    return {
+      userAvgResponseTime: 0,
+      contactAvgResponseTime: 0,
+      userResponseTimes: [],
+      contactResponseTimes: [],
+      readTimeByHour: Array.from({ length: 24 }, (_, hour) => ({
+        hour,
+        userAverageReadTime: 0,
+        contactAverageReadTime: 0,
+        userMessageCount: 0,
+        contactMessageCount: 0,
+      })),
+      readTimeDistribution: {
+        under15min: 0,
+        min15to1hr: 0,
+        hr1to4hr: 0,
+        hr4to1day: 0,
+        over1day: 0,
+        neverRead: 0,
+      },
+    };
+  }
+
+  // Parse messages with read receipt data
+  const chatData = parseMessages(rawMessages, contactName);
+  const { messages } = chatData;
+
+  // Initialize data structures
+  const readTimeByHour: ReadTimeByHour[] = Array.from(
+    { length: 24 },
+    (_, hour) => ({
+      hour,
+      userAverageReadTime: 0,
+      contactAverageReadTime: 0,
+      userMessageCount: 0,
+      contactMessageCount: 0,
+    }),
   );
 
-  const userResponseTimes: number[] = [];
-  const contactResponseTimes: number[] = [];
-  const responseTimeByHour = new Array(24).fill(null).map((_, hour) => ({
-    hour,
-    userResponses: [],
-    contactResponses: [],
-  }));
+  const readTimeDistribution: ReadTimeDistribution = {
+    under15min: 0,
+    min15to1hr: 0,
+    hr1to4hr: 0,
+    hr4to1day: 0,
+    over1day: 0,
+    neverRead: 0,
+  };
 
-  for (let i = 1; i < messages.length; i++) {
-    const currentMessage = messages[i];
-    const previousMessage = messages[i - 1];
+  let totalReadTimes: number[] = [];
+  let userResponseTimes: number[] = [];
+  let contactResponseTimes: number[] = [];
 
-    // Only calculate response time if sender changed
-    if (currentMessage.sender !== previousMessage.sender) {
-      const responseTime =
-        (new Date(currentMessage.timestamp).getTime() -
-          new Date(previousMessage.timestamp).getTime()) /
-        (1000 * 60); // Convert to minutes
+  // Helper function to parse read time from text like "1 minute, 5 seconds" or "3 hours, 27 minutes, 39 seconds"
+  const parseReadTime = (readTimeText: string): number => {
+    let totalMinutes = 0;
 
-      const hour = new Date(currentMessage.timestamp).getHours();
+    // Extract hours
+    const hoursMatch = readTimeText.match(/(\d+)\s+hours?/);
+    if (hoursMatch) {
+      totalMinutes += parseInt(hoursMatch[1]) * 60;
+    }
 
-      if (currentMessage.sender === 'me') {
-        userResponseTimes.push(responseTime);
-        responseTimeByHour[hour].userResponses.push(responseTime);
+    // Extract minutes
+    const minutesMatch = readTimeText.match(/(\d+)\s+minutes?/);
+    if (minutesMatch) {
+      totalMinutes += parseInt(minutesMatch[1]);
+    }
+
+    // Extract seconds (convert to fraction of minutes)
+    const secondsMatch = readTimeText.match(/(\d+)\s+seconds?/);
+    if (secondsMatch) {
+      totalMinutes += parseInt(secondsMatch[1]) / 60;
+    }
+
+    return totalMinutes;
+  };
+
+  // Analyze messages for read receipt patterns
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i];
+    const messageTime = new Date(message.timestamp);
+    const sendHour = messageTime.getHours();
+
+    // Check if this message has read receipt data
+    // Use the readReceipt field from the parsed message
+    const readReceipt = message.readReceipt;
+
+    if (readReceipt) {
+      const readBy = readReceipt.readBy; // "them" or "you"
+      const readTimeText = readReceipt.readTimeText; // "1 minute, 5 seconds"
+      const readTimeMinutes = parseReadTime(readTimeText);
+
+      // Update read time by hour based on who sent the message and who read it
+      if (message.sender === 'me' && readBy === 'them') {
+        // User sent message, contact read it
+        readTimeByHour[sendHour].userAverageReadTime += readTimeMinutes;
+        readTimeByHour[sendHour].userMessageCount += 1;
+      } else if (message.sender === 'contact' && readBy === 'you') {
+        // Contact sent message, user read it
+        readTimeByHour[sendHour].contactAverageReadTime += readTimeMinutes;
+        readTimeByHour[sendHour].contactMessageCount += 1;
+      }
+
+      // Update distribution
+      if (readTimeMinutes < 15) {
+        readTimeDistribution.under15min += 1;
+      } else if (readTimeMinutes < 60) {
+        readTimeDistribution.min15to1hr += 1;
+      } else if (readTimeMinutes < 240) {
+        readTimeDistribution.hr1to4hr += 1;
+      } else if (readTimeMinutes < 1440) {
+        readTimeDistribution.hr4to1day += 1;
       } else {
-        contactResponseTimes.push(responseTime);
-        responseTimeByHour[hour].contactResponses.push(responseTime);
+        readTimeDistribution.over1day += 1;
+      }
+
+      totalReadTimes.push(readTimeMinutes);
+    } else {
+      readTimeDistribution.neverRead += 1;
+    }
+
+    // Analyze response times (existing logic simplified)
+    if (i > 0) {
+      const prevMessage = messages[i - 1];
+      const timeDiff =
+        messageTime.getTime() - new Date(prevMessage.timestamp).getTime();
+      const responseTimeMinutes = timeDiff / (1000 * 60);
+
+      if (message.sender === 'me' && prevMessage.sender === 'contact') {
+        userResponseTimes.push(responseTimeMinutes);
+      } else if (message.sender === 'contact' && prevMessage.sender === 'me') {
+        contactResponseTimes.push(responseTimeMinutes);
       }
     }
   }
 
-  // Calculate averages
+  // Calculate averages for read time by hour
+  readTimeByHour.forEach((hourData) => {
+    if (hourData.userMessageCount > 0) {
+      hourData.userAverageReadTime =
+        hourData.userAverageReadTime / hourData.userMessageCount;
+    }
+    if (hourData.contactMessageCount > 0) {
+      hourData.contactAverageReadTime =
+        hourData.contactAverageReadTime / hourData.contactMessageCount;
+    }
+  });
+
+  // Convert distribution to percentages
+  const totalMessages = messages.length;
+  if (totalMessages > 0) {
+    readTimeDistribution.under15min =
+      (readTimeDistribution.under15min / totalMessages) * 100;
+    readTimeDistribution.min15to1hr =
+      (readTimeDistribution.min15to1hr / totalMessages) * 100;
+    readTimeDistribution.hr1to4hr =
+      (readTimeDistribution.hr1to4hr / totalMessages) * 100;
+    readTimeDistribution.hr4to1day =
+      (readTimeDistribution.hr4to1day / totalMessages) * 100;
+    readTimeDistribution.over1day =
+      (readTimeDistribution.over1day / totalMessages) * 100;
+    readTimeDistribution.neverRead =
+      (readTimeDistribution.neverRead / totalMessages) * 100;
+  }
+
+  // Calculate average response times
   const avgUserResponse =
     userResponseTimes.length > 0
       ? userResponseTimes.reduce((sum, time) => sum + time, 0) /
         userResponseTimes.length
       : 0;
-
   const avgContactResponse =
     contactResponseTimes.length > 0
       ? contactResponseTimes.reduce((sum, time) => sum + time, 0) /
         contactResponseTimes.length
       : 0;
 
-  // Calculate distribution
-  const categorizeResponseTime = (time: number) => {
-    if (time < 5) return 'immediate';
-    if (time < 30) return 'quick';
-    if (time < 120) return 'moderate';
-    if (time < 1440) return 'slow'; // 24 hours
-    return 'delayed';
-  };
-
-  const distribution = {
-    immediate: { user: 0, contact: 0 },
-    quick: { user: 0, contact: 0 },
-    moderate: { user: 0, contact: 0 },
-    slow: { user: 0, contact: 0 },
-    delayed: { user: 0, contact: 0 },
-  };
-
-  userResponseTimes.forEach((time) => {
-    const category = categorizeResponseTime(time);
-    distribution[category as keyof typeof distribution].user++;
-  });
-
-  contactResponseTimes.forEach((time) => {
-    const category = categorizeResponseTime(time);
-    distribution[category as keyof typeof distribution].contact++;
-  });
-
-  // Calculate hourly averages
-  const responseTimeByHourData = responseTimeByHour.map(({ hour, userResponses, contactResponses }) => ({
-    hour,
-    avgUserResponse:
-      userResponses.length > 0
-        ? userResponses.reduce((sum, time) => sum + time, 0) / userResponses.length
-        : 0,
-    avgContactResponse:
-      contactResponses.length > 0
-        ? contactResponses.reduce((sum, time) => sum + time, 0) / contactResponses.length
-        : 0,
-  }));
-
   return {
-    averageResponseTime: {
-      user: avgUserResponse,
-      contact: avgContactResponse,
-    },
-    responseTimeDistribution: distribution,
-    responseTimeByHour: responseTimeByHourData,
+    userAvgResponseTime: avgUserResponse,
+    contactAvgResponseTime: avgContactResponse,
+    userResponseTimes,
+    contactResponseTimes,
+    readTimeByHour,
+    readTimeDistribution,
   };
 };
 
@@ -717,7 +838,9 @@ export const analyzeResponseTimePatterns = (
 const getWeekString = (date: Date): string => {
   const year = date.getFullYear();
   const startOfYear = new Date(year, 0, 1);
-  const dayOfYear = Math.floor((date.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000));
+  const dayOfYear = Math.floor(
+    (date.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000),
+  );
   const weekNumber = Math.ceil((dayOfYear + startOfYear.getDay() + 1) / 7);
   return `${year}-W${String(weekNumber).padStart(2, '0')}`;
 };
