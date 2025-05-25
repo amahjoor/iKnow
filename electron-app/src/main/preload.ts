@@ -7,6 +7,7 @@ export type Channels =
   | 'openai-chat'
   | 'load-conversation-file'
   | 'load-master-index'
+  | 'load-contacts-from-originals'
   | 'load-conversation-summaries'
   | 'load-contact-photo'
   | 'load-contact-details'

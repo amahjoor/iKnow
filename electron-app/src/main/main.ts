@@ -236,6 +236,91 @@ ipcMain.handle('load-chat-messages', async (event, contactName) => {
   }
 });
 
+// Handle loading contacts from original contact.json files (for UI display with real phone numbers)
+ipcMain.handle('load-contacts-from-originals', async () => {
+  try {
+    const dataPath = path.join(__dirname, '../../../data_aggregation/data');
+
+    if (!fs.existsSync(dataPath)) {
+      throw new Error('Data directory not found');
+    }
+
+    const contacts: any[] = [];
+    const directories = fs
+      .readdirSync(dataPath, { withFileTypes: true })
+      .filter((dirent) => dirent.isDirectory() && !dirent.name.startsWith('_'))
+      .map((dirent) => dirent.name);
+
+    directories.forEach((contactName) => {
+      try {
+        const contactPath = path.join(dataPath, contactName, 'contact.json');
+
+        if (fs.existsSync(contactPath)) {
+          const contactData = JSON.parse(fs.readFileSync(contactPath, 'utf8'));
+
+          // Extract phone numbers from contact.json
+          const phoneNumbers =
+            contactData.contact_information?.phone_numbers?.map(
+              (phone: any) => phone.number,
+            ) || [];
+
+          // Extract emails from contact.json
+          const emails =
+            contactData.contact_information?.emails?.map(
+              (email: any) => email.address,
+            ) || [];
+
+          // Build contact entry with real data
+          const contact = {
+            contact_name: contactData.name,
+            phone_numbers: phoneNumbers,
+            emails,
+            organization:
+              contactData.professional_information?.organization,
+            total_messages:
+              contactData.conversation_insights?.total_messages || 0,
+            date_range:
+              contactData.conversation_insights?.date_range || 'Unknown',
+            most_active_number:
+              contactData.conversation_insights?.most_active_number,
+            file_path: `${contactName}/contact.json`,
+          };
+
+          contacts.push(contact);
+        }
+      } catch (error) {
+        console.error(`Error loading contact ${contactName}:`, error);
+        // Continue with other contacts
+      }
+    });
+
+    // Sort by total messages descending
+    contacts.sort((a, b) => b.total_messages - a.total_messages);
+
+    const result = {
+      metadata: {
+        total_conversations: contacts.length,
+        generated_at: new Date().toISOString(),
+        format: 'original_contacts',
+        privacy_enabled: false,
+      },
+      conversations: contacts,
+    };
+
+    return {
+      success: true,
+      data: result,
+    };
+  } catch (error) {
+    console.error('Error loading contacts from originals:', error);
+    const { message } = error instanceof Error ? error : { message: 'Unknown error' };
+    return {
+      success: false,
+      error: message,
+    };
+  }
+});
+
 // Handle OpenAI chat requests
 ipcMain.handle('openai-chat', async (event, { messages, contactContext }) => {
   try {

@@ -10,7 +10,7 @@ import {
 export const loadContactsData = async (): Promise<ContactsData | null> => {
   try {
     const response =
-      await window.electron.ipcRenderer.invoke('load-master-index');
+      await window.electron.ipcRenderer.invoke('load-contacts-from-originals');
     if (response.success) {
       return response.data as ContactsData;
     }
@@ -113,12 +113,13 @@ export const combineContactData = async (): Promise<ContactWithSummary[]> => {
     return [];
   }
 
-  // Create a map of summaries by contact name for quick lookup
+  // Create a map of summaries by file path for matching (since names are anonymized in summaries)
   const summariesMap = new Map(
-    summariesData.summaries.map((summary) => [
-      summary.contact_name,
-      summary.conversation_metadata,
-    ]),
+    summariesData.summaries.map((summary) => {
+      // Extract contact name from file path (e.g., "Charles/conversation_llm.json" -> "Charles")
+      const contactNameFromPath = summary.file_path.split('/')[0];
+      return [contactNameFromPath, summary.conversation_metadata];
+    }),
   );
 
   // Combine contact data with summaries, photos, and detailed contact info
@@ -171,9 +172,9 @@ export const combineContactData = async (): Promise<ContactWithSummary[]> => {
       }
 
       // Extract last message information
-      let last_message_info;
+      let lastMessageInfo;
       if (contactDetails?.last_message_info) {
-        last_message_info = {
+        lastMessageInfo = {
           last_message_date: contactDetails.last_message_info.last_message_date,
           last_message_sender:
             contactDetails.last_message_info.last_message_sender,
@@ -194,7 +195,7 @@ export const combineContactData = async (): Promise<ContactWithSummary[]> => {
         socialMedia,
         detailedEmails,
         professionalInfo,
-        last_message_info,
+        last_message_info: lastMessageInfo,
       };
     }),
   );
