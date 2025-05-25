@@ -1,5 +1,6 @@
 import { ContactWithSummary } from '../types/contact';
 import { loadChatMessages, parseMessages } from './dataLoader';
+import { ConversationData, ParsedMessage } from '../types/contact';
 
 // Common English stop words to filter out
 const STOP_WORDS = new Set([
@@ -196,6 +197,54 @@ export interface MessageAnalysis {
     neutral: number;
     negative: number;
   };
+}
+
+export interface CommunicationHours {
+  hourlyDistribution: number[]; // 24 hours, count of messages per hour
+  userHourlyDistribution: number[]; // 24 hours, count of user messages per hour
+  contactHourlyDistribution: number[]; // 24 hours, count of contact messages per hour
+  peakHours: { hour: number; count: number }[];
+  mostActiveHour: number;
+}
+
+export interface CommunicationTrends {
+  dailyData: {
+    date: string;
+    userMessages: number;
+    contactMessages: number;
+    total: number;
+  }[];
+  weeklyData: {
+    week: string;
+    userMessages: number;
+    contactMessages: number;
+    total: number;
+  }[];
+  monthlyData: {
+    month: string;
+    userMessages: number;
+    contactMessages: number;
+    total: number;
+  }[];
+}
+
+export interface ResponseTimePatterns {
+  averageResponseTime: {
+    user: number; // in minutes
+    contact: number; // in minutes
+  };
+  responseTimeDistribution: {
+    immediate: { user: number; contact: number }; // < 5 min
+    quick: { user: number; contact: number }; // 5-30 min
+    moderate: { user: number; contact: number }; // 30min-2hr
+    slow: { user: number; contact: number }; // 2hr-24hr
+    delayed: { user: number; contact: number }; // > 24hr
+  };
+  responseTimeByHour: {
+    hour: number;
+    avgUserResponse: number;
+    avgContactResponse: number;
+  }[];
 }
 
 // Clean and normalize text
@@ -451,4 +500,232 @@ export const getCommunicationInsights = (analysis: MessageAnalysis) => {
   insights.push(`Common topics: ${topTopics}`);
 
   return insights;
+};
+
+export const analyzeCommunicationHours = (
+  conversationData: ConversationData,
+): CommunicationHours => {
+  const hourlyDistribution = new Array(24).fill(0);
+  const userHourlyDistribution = new Array(24).fill(0);
+  const contactHourlyDistribution = new Array(24).fill(0);
+
+  conversationData.messages.forEach((message) => {
+    const hour = new Date(message.timestamp).getHours();
+    hourlyDistribution[hour]++;
+    
+    if (message.sender === 'me') {
+      userHourlyDistribution[hour]++;
+    } else {
+      contactHourlyDistribution[hour]++;
+    }
+  });
+
+  // Find peak hours (top 3)
+  const peakHours = hourlyDistribution
+    .map((count, hour) => ({ hour, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3);
+
+  const mostActiveHour = peakHours[0]?.hour || 0;
+
+  return {
+    hourlyDistribution,
+    userHourlyDistribution,
+    contactHourlyDistribution,
+    peakHours,
+    mostActiveHour,
+  };
+};
+
+export const analyzeCommunicationTrends = (
+  conversationData: ConversationData,
+): CommunicationTrends => {
+  const dailyMap = new Map<string, { user: number; contact: number }>();
+  const weeklyMap = new Map<string, { user: number; contact: number }>();
+  const monthlyMap = new Map<string, { user: number; contact: number }>();
+
+  conversationData.messages.forEach((message) => {
+    const date = new Date(message.timestamp);
+    const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD
+    const weekStr = getWeekString(date);
+    const monthStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+    const isUser = message.sender === 'me';
+
+    // Daily data
+    if (!dailyMap.has(dateStr)) {
+      dailyMap.set(dateStr, { user: 0, contact: 0 });
+    }
+    const dailyData = dailyMap.get(dateStr)!;
+    if (isUser) dailyData.user++;
+    else dailyData.contact++;
+
+    // Weekly data
+    if (!weeklyMap.has(weekStr)) {
+      weeklyMap.set(weekStr, { user: 0, contact: 0 });
+    }
+    const weeklyData = weeklyMap.get(weekStr)!;
+    if (isUser) weeklyData.user++;
+    else weeklyData.contact++;
+
+    // Monthly data
+    if (!monthlyMap.has(monthStr)) {
+      monthlyMap.set(monthStr, { user: 0, contact: 0 });
+    }
+    const monthlyData = monthlyMap.get(monthStr)!;
+    if (isUser) monthlyData.user++;
+    else monthlyData.contact++;
+  });
+
+  // Convert maps to arrays and sort by date
+  const dailyData = Array.from(dailyMap.entries())
+    .map(([date, data]) => ({
+      date,
+      userMessages: data.user,
+      contactMessages: data.contact,
+      total: data.user + data.contact,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const weeklyData = Array.from(weeklyMap.entries())
+    .map(([week, data]) => ({
+      week,
+      userMessages: data.user,
+      contactMessages: data.contact,
+      total: data.user + data.contact,
+    }))
+    .sort((a, b) => a.week.localeCompare(b.week));
+
+  const monthlyData = Array.from(monthlyMap.entries())
+    .map(([month, data]) => ({
+      month,
+      userMessages: data.user,
+      contactMessages: data.contact,
+      total: data.user + data.contact,
+    }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+
+  return {
+    dailyData,
+    weeklyData,
+    monthlyData,
+  };
+};
+
+export const analyzeResponseTimePatterns = (
+  conversationData: ConversationData,
+): ResponseTimePatterns => {
+  const messages = conversationData.messages.sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+  );
+
+  const userResponseTimes: number[] = [];
+  const contactResponseTimes: number[] = [];
+  const responseTimeByHour = new Array(24).fill(null).map((_, hour) => ({
+    hour,
+    userResponses: [],
+    contactResponses: [],
+  }));
+
+  for (let i = 1; i < messages.length; i++) {
+    const currentMessage = messages[i];
+    const previousMessage = messages[i - 1];
+
+    // Only calculate response time if sender changed
+    if (currentMessage.sender !== previousMessage.sender) {
+      const responseTime =
+        (new Date(currentMessage.timestamp).getTime() -
+          new Date(previousMessage.timestamp).getTime()) /
+        (1000 * 60); // Convert to minutes
+
+      const hour = new Date(currentMessage.timestamp).getHours();
+
+      if (currentMessage.sender === 'me') {
+        userResponseTimes.push(responseTime);
+        responseTimeByHour[hour].userResponses.push(responseTime);
+      } else {
+        contactResponseTimes.push(responseTime);
+        responseTimeByHour[hour].contactResponses.push(responseTime);
+      }
+    }
+  }
+
+  // Calculate averages
+  const avgUserResponse =
+    userResponseTimes.length > 0
+      ? userResponseTimes.reduce((sum, time) => sum + time, 0) /
+        userResponseTimes.length
+      : 0;
+
+  const avgContactResponse =
+    contactResponseTimes.length > 0
+      ? contactResponseTimes.reduce((sum, time) => sum + time, 0) /
+        contactResponseTimes.length
+      : 0;
+
+  // Calculate distribution
+  const categorizeResponseTime = (time: number) => {
+    if (time < 5) return 'immediate';
+    if (time < 30) return 'quick';
+    if (time < 120) return 'moderate';
+    if (time < 1440) return 'slow'; // 24 hours
+    return 'delayed';
+  };
+
+  const distribution = {
+    immediate: { user: 0, contact: 0 },
+    quick: { user: 0, contact: 0 },
+    moderate: { user: 0, contact: 0 },
+    slow: { user: 0, contact: 0 },
+    delayed: { user: 0, contact: 0 },
+  };
+
+  userResponseTimes.forEach((time) => {
+    const category = categorizeResponseTime(time);
+    distribution[category as keyof typeof distribution].user++;
+  });
+
+  contactResponseTimes.forEach((time) => {
+    const category = categorizeResponseTime(time);
+    distribution[category as keyof typeof distribution].contact++;
+  });
+
+  // Calculate hourly averages
+  const responseTimeByHourData = responseTimeByHour.map(({ hour, userResponses, contactResponses }) => ({
+    hour,
+    avgUserResponse:
+      userResponses.length > 0
+        ? userResponses.reduce((sum, time) => sum + time, 0) / userResponses.length
+        : 0,
+    avgContactResponse:
+      contactResponses.length > 0
+        ? contactResponses.reduce((sum, time) => sum + time, 0) / contactResponses.length
+        : 0,
+  }));
+
+  return {
+    averageResponseTime: {
+      user: avgUserResponse,
+      contact: avgContactResponse,
+    },
+    responseTimeDistribution: distribution,
+    responseTimeByHour: responseTimeByHourData,
+  };
+};
+
+// Helper function to get week string (YYYY-WW format)
+const getWeekString = (date: Date): string => {
+  const year = date.getFullYear();
+  const startOfYear = new Date(year, 0, 1);
+  const dayOfYear = Math.floor((date.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000));
+  const weekNumber = Math.ceil((dayOfYear + startOfYear.getDay() + 1) / 7);
+  return `${year}-W${String(weekNumber).padStart(2, '0')}`;
+};
+
+// Helper function to format response time
+export const formatResponseTime = (minutes: number): string => {
+  if (minutes < 1) return '< 1 min';
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)} hr`;
+  return `${Math.round(minutes / 1440)} days`;
 };

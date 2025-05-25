@@ -6,6 +6,15 @@ import {
   getFullConversationForAI,
 } from '../utils/dataLoader';
 import ChatHistory from './ChatHistory';
+import { CommunicationAnalytics } from './CommunicationAnalytics';
+import {
+  analyzeCommunicationHours,
+  analyzeCommunicationTrends,
+  analyzeResponseTimePatterns,
+  CommunicationHours,
+  CommunicationTrends,
+  ResponseTimePatterns,
+} from '../utils/messageAnalyzer';
 
 interface ContactDetailProps {
   contact: ContactWithSummary;
@@ -29,6 +38,14 @@ export const ContactDetail: React.FC<ContactDetailProps> = ({
   const [viewMode, setViewMode] = useState<'ai' | 'chat'>('ai'); // Toggle between AI insights and chat history
   const [showGlobalAnalysis, setShowGlobalAnalysis] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
+  
+  // Analytics state
+  const [communicationHours, setCommunicationHours] =
+    useState<CommunicationHours | null>(null);
+  const [communicationTrends, setCommunicationTrends] =
+    useState<CommunicationTrends | null>(null);
+  const [responsePatterns, setResponsePatterns] =
+    useState<ResponseTimePatterns | null>(null);
 
   const initials = contact.contact_name
     .split(' ')
@@ -60,6 +77,17 @@ export const ContactDetail: React.FC<ContactDetailProps> = ({
       try {
         const data = await loadConversationData(contact.contact_name);
         setConversationData(data);
+        
+        // Calculate analytics if conversation data is available
+        if (data && data.messages.length > 0) {
+          const hours = analyzeCommunicationHours(data);
+          const trends = analyzeCommunicationTrends(data);
+          const patterns = analyzeResponseTimePatterns(data);
+          
+          setCommunicationHours(hours);
+          setCommunicationTrends(trends);
+          setResponsePatterns(patterns);
+        }
       } catch (error) {
         console.error('Failed to load conversation data:', error);
       } finally {
@@ -259,7 +287,7 @@ export const ContactDetail: React.FC<ContactDetailProps> = ({
         </div>
 
         {/* Contact Info Panel */}
-        <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200 max-w-4xl">
+        <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200">
           <h2 className="text-2xl font-bold text-gray-900 mb-6 pb-3 border-b-2 border-gray-100">
             Contact Information
           </h2>
@@ -481,6 +509,18 @@ export const ContactDetail: React.FC<ContactDetailProps> = ({
             )}
           </div>
         </div>
+
+        {/* Communication Analytics */}
+        {communicationHours && communicationTrends && responsePatterns && (
+          <div className="mt-8">
+            <CommunicationAnalytics
+              hours={communicationHours}
+              trends={communicationTrends}
+              responsePatterns={responsePatterns}
+              contactName={contact.contact_name}
+            />
+          </div>
+        )}
       </div>
 
       {/* Right Sidebar - AI Analysis */}
