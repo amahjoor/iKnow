@@ -10,15 +10,16 @@ from dateutil.parser import parse
 from datetime import datetime, timedelta
 import emoji
 
-# Import LLM privacy functionality from separate module
-from llm_privacy import (
+# Import LLM processing functionality from modular structure
+from llm_processor import (
     set_privacy_enabled, 
-    create_llm_conversation_file, 
     create_llm_master_files,
     optimize_messages_for_llm,
     generate_conversation_metadata,
     reset_person_mapping,
-    ANONYMIZE_LLM_DATA
+    process_contact_for_llm_files,
+    ANONYMIZE_LLM_DATA,
+    RECENT_INTERACTIONS_FILENAME
 )
 
 # Configuration
@@ -30,8 +31,9 @@ LLM_FOLDER = "_llm_ready"  # Folder for LLM-ready conversation files
 LLM_INDEX_FILE = "master_index.json"  # Master index file name
 MIN_MESSAGE_COUNT = 10  # Only export contacts with this many messages or more
 
-
-
+# Message file configuration
+CREATE_INDIVIDUAL_MESSAGE_FILES = False  # Set to True if you need individual files for debugging
+CREATE_CONSOLIDATED_MESSAGE_FILES = True  # Always create the unified timeline
 
 # Enhanced username patterns to catch directly mentioned usernames
 USERNAME_CONTEXT_PATTERNS = [
@@ -611,17 +613,34 @@ def process_vcard_data(vcard_data):
                 contact_folder = os.path.join(MAIN_OUTPUT_FOLDER, safe_contact_name)
                 os.makedirs(contact_folder, exist_ok=True)
                 
-                # Copy message files for this contact
+                # Copy individual message files for this contact (optional, for debugging)
                 message_files = []
-                for phone in phone_numbers:
-                    message_file = copy_message_file_for_contact(
-                        phone, contact_folder, contact_name, vcard, temp_export_dir
+                if CREATE_INDIVIDUAL_MESSAGE_FILES:
+                    print(f"  📄 Creating individual message files...")
+                    for phone in phone_numbers:
+                        message_file = copy_message_file_for_contact(
+                            phone, contact_folder, contact_name, vcard, temp_export_dir
+                        )
+                        if message_file:
+                            message_files.append(message_file)
+                else:
+                    print(f"  ⏭️  Skipping individual message files (CREATE_INDIVIDUAL_MESSAGE_FILES=False)")
+                
+                # Create consolidated message file (merges all phone numbers)
+                if CREATE_CONSOLIDATED_MESSAGE_FILES:
+                    consolidated_file = create_consolidated_message_file(
+                        contact_name, phone_numbers, temp_export_dir, contact_folder
                     )
-                    message_files.append(message_file)
+                    if consolidated_file:
+                        message_files.append(consolidated_file)
+                        print(f"  ✅ Using consolidated message file for all processing")
+                else:
+                    print(f"  ⚠️  Warning: CREATE_CONSOLIDATED_MESSAGE_FILES is disabled")
                 
                 # Process contact for LLM-ready format to get conversation metadata
-                llm_file_path, llm_data = process_contact_for_llm(
-                    contact_name, phone_numbers, vcard, temp_export_dir, MAIN_OUTPUT_FOLDER
+                llm_file_path, llm_data = process_contact_for_llm_files(
+                    contact_name, phone_numbers, vcard, temp_export_dir, MAIN_OUTPUT_FOLDER,
+                    consolidate_contact_messages
                 )
                 
                 # Extract conversation metadata for contact file
@@ -642,6 +661,11 @@ def process_vcard_data(vcard_data):
                 if llm_data:
                     llm_conversations_data[safe_contact_name] = llm_data
                     print(f"  ✓ Created LLM conversation: {llm_data['metadata']['total_messages']} messages")
+                    if llm_data.get('interaction_analysis'):
+                        interaction_stats = llm_data['interaction_analysis']
+                        print(f"  ✓ Created recent interactions: {interaction_stats.get('message_count', 0)} messages analyzed")
+                        print(f"    - Response pairs: {interaction_stats.get('response_pairs', 0)}")
+                        print(f"    - Interaction ratio: {interaction_stats.get('interaction_ratio', 0)}")
                     print(f"  ✓ Added conversation insights to contact.json")
                 
                 # Store contact data for summary
@@ -689,6 +713,7 @@ def process_vcard_data(vcard_data):
         print(f"\n📁 Output location: {MAIN_OUTPUT_FOLDER}/")
         print(f"📁 Individual contacts: {MAIN_OUTPUT_FOLDER}/[ContactName]/contact.json")
         print(f"📁 LLM conversations: {MAIN_OUTPUT_FOLDER}/[ContactName]/conversation_llm.json")
+        print(f"📁 Recent interactions: {MAIN_OUTPUT_FOLDER}/[ContactName]/{RECENT_INTERACTIONS_FILENAME}")
         print(f"📁 All messages (flat): {MAIN_OUTPUT_FOLDER}/{ALL_MESSAGES_FOLDER}/")
         print(f"📁 Summary files: {MAIN_OUTPUT_FOLDER}/{SUMMARY_FOLDER}/")
         print(f"📁 LLM master index: {MAIN_OUTPUT_FOLDER}/{LLM_FOLDER}/{LLM_INDEX_FILE}")
@@ -832,184 +857,160 @@ def consolidate_contact_messages(contact_name, phone_numbers, temp_export_dir):
     
     return all_messages, phone_usage
 
-def process_contact_for_llm(contact_name, phone_numbers, vcard, temp_export_dir, output_folder):
+def create_consolidated_message_file(contact_name, phone_numbers, temp_export_dir, contact_folder):
     """
-    Process a single contact for LLM-ready format
+    Create a single consolidated message file that merges all phone numbers for a contact
+    into one chronological timeline. This ensures we have one unified conversation view.
     """
-    # Get consolidated messages
-    messages, phone_usage = consolidate_contact_messages(contact_name, phone_numbers, temp_export_dir)
+    print(f"  🔄 Creating consolidated message file for {contact_name}...")
     
-    if not messages:
-        return None, None
+    # Parse messages from all phone numbers but preserve more original format info
+    all_raw_messages = []
+    phone_usage = {}
     
-    # Extract contact data from vcard for context
-    contact_data = {'phone_numbers': phone_numbers, 'phone_usage': phone_usage}
-    
-    if hasattr(vcard, 'email'):
-        contact_data['emails'] = [{'address': email.value} for email in vcard.email_list]
-    
-    if hasattr(vcard, 'org'):
-        contact_data['organization'] = vcard.org.value[0]
-    
-    if hasattr(vcard, 'title'):
-        contact_data['title'] = vcard.title.value
-    
-    # Create LLM conversation file
-    llm_file_path, conversation_metadata = create_llm_conversation_file(
-        contact_name, contact_data, messages, output_folder
-    )
-    
-    # Return data for master index with updated file path
-    safe_contact_name = re.sub(r'[\\/*?:"<>|]', '_', contact_name)
-    llm_data = {
-        'file_path': f"{safe_contact_name}/conversation_llm.json",
-        'metadata': conversation_metadata,
-        'phone_numbers': phone_numbers
-    }
-    
-    if 'emails' in contact_data:
-        llm_data['emails'] = [email['address'] for email in contact_data['emails']]
-    if 'organization' in contact_data:
-        llm_data['organization'] = contact_data['organization']
-    
-    return llm_file_path, llm_data
-
-    """
-    Clean message content for LLM processing by removing noise and stop words
-    """
-    if not content or not isinstance(content, str):
-        return ""
-    
-    # Remove excessive whitespace and normalize
-    content = ' '.join(content.split())
-    
-    # Process emojis for LLM optimization
-    content = process_emojis_for_llm(content)
-    
-    # Remove read receipt and delivery artifacts
-    content = re.sub(r'\(Read by .+?\)', '', content)
-    content = re.sub(r'\(Delivered.+?\)', '', content)
-    
-    # Remove system messages about replies and reactions
-    content = re.sub(r'This message responded to an earlier message\.?', '', content)
-    content = re.sub(r'Replied to ".+?"', '', content)
-    content = re.sub(r'Reacted to ".+?" with .+', '', content)
-    content = re.sub(r'Emphasized ".+?"', '', content)
-    content = re.sub(r'Liked ".+?"', '', content)
-    content = re.sub(r'Loved ".+?"', '', content)
-    content = re.sub(r'Laughed at ".+?"', '', content)
-    content = re.sub(r'Questioned ".+?"', '', content)
-    content = re.sub(r'Disliked ".+?"', '', content)
-    
-    # Remove tapback artifacts
-    content = re.sub(r'Tapback: .+', '', content)
-    
-    # Remove other system messages
-    content = re.sub(r'\[.+?\]', '', content)  # Remove bracketed system messages
-    
-    # Clean up multiple spaces again after removals
-    content = ' '.join(content.split())
-    
-    # Remove very short meaningless messages
-    short_meaningless = {
-        'ok', 'okay', 'k', 'kk', 'lol', 'haha', 'yeah', 'yes', 'no', 'np', 
-        'yep', 'nope', 'sure', 'cool', 'nice', 'alright', 'ty', 'thx', 'thanks',
-        'hmm', 'mhm', 'yup', 'nah', 'sup', 'hey', 'hi', 'hello', 'bye'
-    }
-    
-    if content.lower().strip() in short_meaningless:
-        return ""
-    
-    # Remove if it's just emojis or very short
-    if len(content.strip()) <= 2:
-        return ""
-    
-    # Remove excessive punctuation
-    content = re.sub(r'[.]{3,}', '...', content)
-    content = re.sub(r'[!]{2,}', '!', content)
-    content = re.sub(r'[?]{2,}', '?', content)
-    
-    return content.strip()
-
-    """
-    Group consecutive messages from the same sender within a time window
-    """
-    if not messages:
-        return []
-    
-    grouped_messages = []
-    current_group = None
-    
-    for message in messages:
-        # Clean the content first
-        cleaned_content = clean_message_content(message.get('content', ''))
+    for phone_number in phone_numbers:
+        # Find message file for this phone number
+        phone_clean = phone_number.replace('+', '')
+        possible_filenames = [
+            f"{phone_number}.txt",
+            f"{phone_clean}.txt"
+        ]
         
-        # Skip empty messages after cleaning
-        if not cleaned_content:
-            continue
+        for filename in possible_filenames:
+            file_path = os.path.join(temp_export_dir, filename)
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    # Parse but keep original format
+                    lines = content.split('\n')
+                    current_message_lines = []
+                    message_timestamp = None
+                    message_sender = None
+                    
+                    for line in lines:
+                        line_stripped = line.strip()
+                        if not line_stripped:
+                            if current_message_lines and message_timestamp:
+                                # Save current message
+                                all_raw_messages.append({
+                                    'timestamp_line': message_timestamp,
+                                    'sender_line': message_sender,
+                                    'content_lines': current_message_lines.copy(),
+                                    'phone_source': phone_number
+                                })
+                                current_message_lines = []
+                                message_timestamp = None
+                                message_sender = None
+                            continue
+                        
+                        # Check if line is a timestamp
+                        timestamp_patterns = [
+                            r'^(\w{3}\s+\d{1,2},\s+\d{4}\s+\d{1,2}:\d{2}:\d{2}\s+[AP]M)',
+                            r'^(\d{1,2}/\d{1,2}/\d{2,4}\s+\d{1,2}:\d{2}:\d{2}\s+[AP]M)',
+                        ]
+                        
+                        is_timestamp = False
+                        for pattern in timestamp_patterns:
+                            if re.match(pattern, line_stripped):
+                                is_timestamp = True
+                                break
+                        
+                        if is_timestamp:
+                            # Save previous message if exists
+                            if current_message_lines and message_timestamp:
+                                all_raw_messages.append({
+                                    'timestamp_line': message_timestamp,
+                                    'sender_line': message_sender,
+                                    'content_lines': current_message_lines.copy(),
+                                    'phone_source': phone_number
+                                })
+                            
+                            # Start new message
+                            message_timestamp = line_stripped
+                            current_message_lines = []
+                            message_sender = None
+                            
+                        elif line_stripped in ['Me', 'me'] or line_stripped.startswith('+') or line_stripped.startswith('1'):
+                            # Sender line
+                            message_sender = line_stripped
+                            
+                        else:
+                            # Content line
+                            current_message_lines.append(line_stripped)
+                    
+                    # Add the last message
+                    if current_message_lines and message_timestamp:
+                        all_raw_messages.append({
+                            'timestamp_line': message_timestamp,
+                            'sender_line': message_sender,
+                            'content_lines': current_message_lines.copy(),
+                            'phone_source': phone_number
+                        })
+                    
+                    phone_usage[phone_number] = len([m for m in all_raw_messages if m['phone_source'] == phone_number])
+                    
+                except Exception as e:
+                    print(f"  ! Error reading {file_path}: {str(e)}")
+                break
+    
+    if not all_raw_messages:
+        print(f"  ! No messages found for {contact_name}")
+        return None
+    
+    # Sort messages chronologically
+    def parse_timestamp_for_sorting(timestamp_line):
+        try:
+            from dateutil.parser import parse
+            return parse(timestamp_line)
+        except:
+            return datetime.min
+    
+    all_raw_messages.sort(key=lambda x: parse_timestamp_for_sorting(x['timestamp_line']))
+    
+    # Create consolidated file content in original format
+    consolidated_content = []
+    
+    for message in all_raw_messages:
+        # Add timestamp
+        consolidated_content.append(message['timestamp_line'])
         
-        sender = message.get('sender', 'unknown')
-        timestamp = message.get('timestamp', '')
-        
-        # If this is the first message or different sender, start new group
-        if (current_group is None or 
-            current_group['sender'] != sender or 
-            should_start_new_group(current_group['timestamp'], timestamp, time_window_minutes)):
-            
-            # Save previous group if it exists
-            if current_group:
-                grouped_messages.append(current_group)
-            
-            # Start new group
-            current_group = {
-                'timestamp': timestamp,
-                'sender': sender,
-                'content': cleaned_content
-            }
+        # Add sender (normalize to show phone number for contact messages)
+        sender = message['sender_line']
+        if sender and (sender.startswith('+') or sender.startswith('1')):
+            # This is a contact message - use the source phone number for clarity
+            consolidated_content.append(message['phone_source'])
+        elif sender:
+            consolidated_content.append(sender)
         else:
-            # Check for duplication before adding to current group
-            existing_content = current_group['content'].lower()
-            new_content = cleaned_content.lower()
-            
-            # Only add if it's not a duplicate or very similar
-            if (new_content not in existing_content and 
-                not is_content_similar(existing_content, new_content)):
-                current_group['content'] += ' ' + cleaned_content
-    
-    # Add the last group
-    if current_group:
-        grouped_messages.append(current_group)
-    
-    return grouped_messages
-
-    """
-    Determine if we should start a new message group based on time gap
-    """
-    try:
-        prev_time = parse(prev_timestamp)
-        curr_time = parse(curr_timestamp)
+            consolidated_content.append('Unknown')
         
-        time_diff = curr_time - prev_time
-        return time_diff > timedelta(minutes=time_window_minutes)
-    except Exception:
-        # If we can't parse timestamps, start new group to be safe
-        return True
-
-    """
-    Check if two pieces of content are too similar (to prevent duplication)
-    """
-    # Simple similarity check - if one is contained in the other and they're similar length
-    shorter = content1 if len(content1) < len(content2) else content2
-    longer = content2 if len(content1) < len(content2) else content1
+        # Add content lines
+        for content_line in message['content_lines']:
+            consolidated_content.append(content_line)
+        
+        # Add empty line between messages
+        consolidated_content.append('')
     
-    if len(shorter) == 0:
-        return False
+    # Write consolidated file
+    consolidated_filename = 'messages_consolidated.txt'
+    consolidated_path = os.path.join(contact_folder, consolidated_filename)
     
-    # If the shorter text is mostly contained in the longer text
-    if shorter in longer and len(shorter) / len(longer) > similarity_threshold:
-        return True
-    
-    return False
+    try:
+        with open(consolidated_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(consolidated_content))
+        
+        print(f"  ✓ Created consolidated message file: {consolidated_filename}")
+        print(f"    - Total messages: {len(all_raw_messages)}")
+        print(f"    - Phone numbers: {len(phone_numbers)}")
+        print(f"    - Phone usage: {phone_usage}")
+        
+        return consolidated_filename
+        
+    except Exception as e:
+        print(f"  ! Error creating consolidated message file: {str(e)}")
+        return None
 
 if __name__ == "__main__":
     print("🚀 Starting Integrated Contacts & Messages Exporter v2 (JSON)")
@@ -1085,6 +1086,7 @@ if __name__ == "__main__":
     print("• Standardize phone number formatting")
     print("• Create structured, machine-readable JSON files")
     print("• Create LLM-ready conversation format with message grouping & cleaning")
+    print("• Create recent interactions files with preserved formatting for pattern analysis")
     if ANONYMIZE_LLM_DATA:
         print("• Anonymize sensitive data in LLM files (names, phone numbers, addresses)")
         print("• Create mapping files for re-identification if needed")

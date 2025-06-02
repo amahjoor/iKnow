@@ -19,6 +19,7 @@ import log from 'electron-log';
 import OpenAI from 'openai';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
+import { imessageService } from './imessage-service';
 
 config();
 
@@ -200,26 +201,63 @@ ipcMain.handle('load-contact-details', async (event, contactName) => {
 // Handle loading chat messages from messages.txt files
 ipcMain.handle('load-chat-messages', async (event, contactName) => {
   try {
+    // Sanitize contact name to match how folders were created
+    // Replace invalid filename characters with underscores (same as contacts_exporter.py)
+    const safeContactName = contactName.replace(/[\\/*?:"<>|]/g, '_');
+
     const contactDir = path.join(
       __dirname,
       '../../../data_aggregation/data',
-      contactName,
+      safeContactName,
     );
 
     if (!fs.existsSync(contactDir)) {
+      console.log(`Contact directory not found: ${contactDir}`);
       return { success: false, error: 'Contact directory not found' };
     }
 
-    // Look for message files with the pattern: messages_*_pref.txt
     const files = fs.readdirSync(contactDir);
+    console.log(
+      `Looking for message files in ${contactDir}, found files:`,
+      files,
+    );
+
+    // Look for the consolidated message file (standard since we no longer create individual files by default)
+    const consolidatedFile = 'messages_consolidated.txt';
+    if (files.includes(consolidatedFile)) {
+      console.log(`Found consolidated message file: ${consolidatedFile}`);
+      const messagesPath = path.join(contactDir, consolidatedFile);
+      const messagesData = fs.readFileSync(messagesPath, 'utf8');
+
+      return {
+        success: true,
+        data: messagesData,
+      };
+    }
+
+    // Fallback for backwards compatibility (older exports that still have individual files)
+    console.log(
+      'Consolidated file not found, checking for individual message files...',
+    );
     const messageFile = files.find(
-      (file) => file.startsWith('messages_') && file.endsWith('_pref.txt'),
+      (file) =>
+        file.startsWith('messages_') &&
+        file.endsWith('.txt') &&
+        file !== consolidatedFile,
     );
 
     if (!messageFile) {
-      return { success: false, error: 'Messages file not found' };
+      console.log(
+        `No message files found in ${contactDir}. Try re-running the data aggregation script.`,
+      );
+      return {
+        success: false,
+        error:
+          'No message files found. Try re-running the data aggregation script.',
+      };
     }
 
+    console.log(`Found legacy individual message file: ${messageFile}`);
     const messagesPath = path.join(contactDir, messageFile);
     const messagesData = fs.readFileSync(messagesPath, 'utf8');
 
@@ -334,8 +372,7 @@ ipcMain.handle('openai-chat', async (event, { messages, contactContext }) => {
 
     // Check if this is a global database analysis request
     if (contactContext?.type === 'global_analysis') {
-      const stats = contactContext.databaseStats;
-      const messageAnalysis = contactContext.messageAnalysis;
+      const { databaseStats: stats, messageAnalysis } = contactContext;
 
       systemPrompt = `You are an AI assistant specializing in social network analysis and communication pattern insights. You have access to comprehensive data about the user's entire contact database.
 
@@ -443,6 +480,395 @@ No full conversation data available. Provide insights based on the metadata and 
     };
   } catch (error) {
     console.error('OpenAI API error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred',
+    };
+  }
+});
+
+// Handle AI message generation with full conversation context and style analysis
+ipcMain.handle(
+  'generate-message',
+  async (event, { contactName, prompt, messageType }) => {
+    try {
+      if (!process.env.OPENAI_API_KEY) {
+        throw new Error('OpenAI API key not configured');
+      }
+
+      const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+
+      // Load full conversation JSON for the contact
+      const contactDir = path.join(
+        __dirname,
+        '../../../data_aggregation/data',
+        contactName,
+      );
+
+      if (!fs.existsSync(contactDir)) {
+        throw new Error('Contact directory not found');
+      }
+
+      // Load recent interactions file for better style analysis (preserves original formatting)
+      const recentInteractionsPath = path.join(
+        contactDir,
+        'conversation_recent_interactions.json',
+      );
+      let recentInteractionsData = null;
+
+      if (fs.existsSync(recentInteractionsPath)) {
+        const recentContent = fs.readFileSync(recentInteractionsPath, 'utf8');
+        recentInteractionsData = JSON.parse(recentContent);
+      }
+
+      // Fallback to main conversation file if recent interactions not available
+      const conversationPath = path.join(contactDir, 'conversation_llm.json');
+      let conversationData = null;
+
+      if (fs.existsSync(conversationPath)) {
+        const conversationContent = fs.readFileSync(conversationPath, 'utf8');
+        conversationData = JSON.parse(conversationContent);
+      }
+
+      // Load contact.json for additional context
+      const contactPath = path.join(contactDir, 'contact.json');
+      let contactData = null;
+
+      if (fs.existsSync(contactPath)) {
+        const contactContent = fs.readFileSync(contactPath, 'utf8');
+        contactData = JSON.parse(contactContent);
+      }
+
+      // Analyze user's messaging style from recent interactions (preferred) or conversation data
+      let userMessages = [];
+      let conversationContext = '';
+      let interactionAnalysis = null;
+
+      if (recentInteractionsData) {
+        // Use recent interactions data - much better for style analysis!
+        const recentMessages = recentInteractionsData.recent_messages || [];
+
+        // Get user's messages (sender: 'me') with preserved formatting
+        userMessages = recentMessages
+          .filter((msg: any) => msg.sender === 'me')
+          .map((msg: any) => msg.content);
+
+        // Get recent conversation context with preserved formatting
+        conversationContext = recentMessages
+          .slice(-15) // Last 15 messages for context
+          .map(
+            (msg: any) =>
+              `${msg.sender === 'me' ? 'You' : contactName}: ${msg.content}`,
+          )
+          .join('\n');
+
+        // Include interaction analysis from the recent interactions file
+        interactionAnalysis = recentInteractionsData.interaction_analysis;
+      } else if (conversationData && conversationData.messages) {
+        // Fallback to main conversation data
+        userMessages = conversationData.messages
+          .filter((msg: any) => msg.sender === 'me')
+          .slice(-20) // Last 20 user messages for style analysis
+          .map((msg: any) => msg.content);
+
+        // Get recent conversation context (last 15 messages)
+        const recentMessages = conversationData.messages.slice(-15);
+        conversationContext = recentMessages
+          .map(
+            (msg: any) =>
+              `${msg.sender === 'me' ? 'You' : contactName}: ${msg.content}`,
+          )
+          .join('\n');
+      }
+
+      // Enhanced style analysis using preserved formatting from recent interactions
+      const styleAnalysis = analyzeMessagingStyleAdvanced(userMessages);
+
+      // Create comprehensive system prompt with recent interactions data
+      let systemPrompt = `You are an AI assistant that generates messages to send to ${contactName}. You MUST always generate a direct message that will be sent to ${contactName} - never ask the user questions or say you need more information.
+
+CONTACT: ${contactName}
+${contactData?.professional_information?.organization ? `ORGANIZATION: ${contactData.professional_information.organization}` : ''}
+
+${recentInteractionsData ? 'RECENT INTERACTIONS ANALYSIS (PRESERVED FORMATTING):' : 'CONVERSATION STYLE ANALYSIS:'}
+${JSON.stringify(styleAnalysis, null, 2)}
+
+${
+  interactionAnalysis
+    ? `
+INTERACTION PATTERNS:
+- User messages in recent conversations: ${interactionAnalysis.user_messages}
+- Contact messages: ${interactionAnalysis.contact_messages}
+- Response pairs: ${interactionAnalysis.response_pairs}
+- User avg message length: ${interactionAnalysis.user_avg_message_length} chars
+- Contact avg message length: ${interactionAnalysis.contact_avg_message_length} chars
+- Interaction ratio: ${interactionAnalysis.interaction_ratio}
+- Conversation timespan: ${interactionAnalysis.timespan_hours} hours
+`
+    : ''
+}
+
+RECENT CONVERSATION CONTEXT:
+${conversationContext}
+
+CRITICAL INSTRUCTIONS:
+1. ALWAYS generate a message that will be sent directly to ${contactName}
+2. NEVER ask the user questions or request clarification
+3. NEVER say you need more information
+4. If the user's request is vague, make reasonable assumptions and create a message anyway
+5. The message should sound EXACTLY like how the user naturally writes based on their recent messages
+6. Match their typical message length, tone, personality, and formatting style
+7. Use their patterns for emojis, punctuation, capitalization, slang, abbreviations, and overall voice
+8. The message should feel authentic - like ${contactName} would immediately recognize it as genuinely from the user
+9. Consider the conversation context and relationship dynamic shown in recent interactions
+10. Pay special attention to how the user actually formats their messages (spacing, punctuation, etc.)
+11. Return ONLY the message text that will be sent to ${contactName}, nothing else
+
+USER REQUEST: "${prompt}"
+MESSAGE TYPE: ${messageType}
+
+Generate a message to ${contactName} based on the user's request. Write it in their exact authentic style as shown in their recent messages.`;
+
+      // Adjust prompt based on message type
+      if (messageType === 'suggest_reply') {
+        systemPrompt += `\n\nGenerate a thoughtful reply message to send to ${contactName} in response to their last message. Write it in the user's authentic style as shown in recent interactions.`;
+      } else if (messageType === 'make_formal') {
+        systemPrompt += `\n\nGenerate a more formal message to send to ${contactName}, but still maintain the user's core personality and voice patterns.`;
+      } else if (messageType === 'make_casual') {
+        systemPrompt += `\n\nGenerate a casual and relaxed message to send to ${contactName}, matching the user's typical informal style from recent messages.`;
+      } else if (messageType === 'conversation_starter') {
+        systemPrompt += `\n\nGenerate a natural conversation starter message to send to ${contactName} that fits the user's communication style and relationship dynamic.`;
+      }
+
+      const response = await openai.chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: 200, // Keep messages concise like real texts
+        temperature: 0.8, // Higher creativity for natural variation
+      });
+
+      const generatedMessage =
+        response.choices[0]?.message?.content?.trim() || '';
+
+      return {
+        success: true,
+        message: generatedMessage,
+      };
+    } catch (error) {
+      console.error('Error generating message:', error);
+      return {
+        success: false,
+        error:
+          error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  },
+);
+
+// Enhanced helper function to analyze user's messaging style with preserved formatting
+function analyzeMessagingStyleAdvanced(userMessages: string[]) {
+  if (userMessages.length === 0) {
+    return {
+      messageCount: 0,
+      averageLength: 0,
+      usesEmojis: false,
+      emojiFrequency: 0,
+      usesPunctuation: false,
+      punctuationStyle: 'none',
+      usesCapitalization: false,
+      capitalizationPattern: 'none',
+      usesAbbreviations: false,
+      usesSlang: false,
+      commonPatterns: [],
+      recentExamples: [],
+      formattingPatterns: {},
+    };
+  }
+
+  const totalLength = userMessages.reduce((sum, msg) => sum + msg.length, 0);
+  const averageLength = Math.round(totalLength / userMessages.length);
+
+  // Enhanced emoji detection and frequency
+  const emojiRegex =
+    /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu;
+  const messagesWithEmojis = userMessages.filter((msg) => emojiRegex.test(msg));
+  const usesEmojis = messagesWithEmojis.length > 0;
+  const emojiFrequency = messagesWithEmojis.length / userMessages.length;
+
+  // Detailed punctuation analysis
+  const endsPunctuation = userMessages.filter((msg) =>
+    /[.!?]$/.test(msg.trim()),
+  );
+  const usesPunctuation = endsPunctuation.length > 0;
+  let punctuationStyle = 'none';
+
+  if (usesPunctuation) {
+    const periodsCount = userMessages.filter((msg) =>
+      msg.trim().endsWith('.'),
+    ).length;
+    const exclamationCount = userMessages.filter((msg) =>
+      msg.trim().endsWith('!'),
+    ).length;
+    const questionCount = userMessages.filter((msg) =>
+      msg.trim().endsWith('?'),
+    ).length;
+
+    if (exclamationCount > periodsCount && exclamationCount > questionCount) {
+      punctuationStyle = 'exclamatory';
+    } else if (periodsCount > 0) {
+      punctuationStyle = 'formal';
+    } else {
+      punctuationStyle = 'mixed';
+    }
+  }
+
+  // Enhanced capitalization patterns
+  const startsCapital = userMessages.filter((msg) => /^[A-Z]/.test(msg));
+  const usesCapitalization = startsCapital.length > 0;
+  let capitalizationPattern = 'none';
+
+  if (usesCapitalization) {
+    const capitalRatio = startsCapital.length / userMessages.length;
+    if (capitalRatio > 0.8) {
+      capitalizationPattern = 'consistent';
+    } else if (capitalRatio > 0.3) {
+      capitalizationPattern = 'mixed';
+    } else {
+      capitalizationPattern = 'minimal';
+    }
+  }
+
+  // Common abbreviations
+  const abbreviationRegex =
+    /\b(lol|omg|btw|tbh|nvm|idk|imo|fyi|asap|ttyl|brb|wtf|smh|irl|dm|rn|af|fr|ngl|periodt)\b/gi;
+  const usesAbbreviations = userMessages.some((msg) =>
+    abbreviationRegex.test(msg),
+  );
+
+  // Slang detection
+  const slangRegex =
+    /\b(gonna|wanna|gotta|kinda|sorta|yeah|yep|nah|sup|hey|yo|dude|bro|sis|bestie|lowkey|highkey|deadass|facts|bet|cap|no cap|salty|sus|vibe|mood|stan|ship|tea|spill|flex|ghost|slide|fire|lit|slaps|hits different)\b/gi;
+  const usesSlang = userMessages.some((msg) => slangRegex.test(msg));
+
+  // Formatting patterns analysis
+  const formattingPatterns = {
+    usesMultipleSpaces: userMessages.some((msg) => /\s{2,}/.test(msg)),
+    usesEllipsis: userMessages.some((msg) => /\.{2,}/.test(msg)),
+    usesRepeatedChars: userMessages.some((msg) => /(.)\1{2,}/.test(msg)),
+    usesAllCaps: userMessages.some((msg) => /[A-Z]{3,}/.test(msg)),
+    averageWordsPerMessage:
+      userMessages.reduce((sum, msg) => sum + msg.split(/\s+/).length, 0) /
+      userMessages.length,
+  };
+
+  // Get recent examples for direct style reference
+  const recentExamples = userMessages.slice(-8); // More examples for better analysis
+
+  return {
+    messageCount: userMessages.length,
+    averageLength,
+    usesEmojis,
+    emojiFrequency: Math.round(emojiFrequency * 100) / 100,
+    usesPunctuation,
+    punctuationStyle,
+    usesCapitalization,
+    capitalizationPattern,
+    usesAbbreviations,
+    usesSlang,
+    formattingPatterns,
+    recentExamples,
+  };
+}
+
+// Handle sending iMessages
+ipcMain.handle('send-imessage', async (event, { recipient, message }) => {
+  try {
+    console.log(`Attempting to send message to ${recipient}: ${message}`);
+
+    // Check if Messages.app is available
+    const isAvailable = await imessageService.isMessagesAppAvailable();
+    if (!isAvailable) {
+      console.log('Messages.app not running, attempting to launch...');
+      const launched = await imessageService.launchMessagesApp();
+      if (!launched) {
+        throw new Error(
+          'Could not launch Messages.app. Please ensure it is installed and you have permission to access it.',
+        );
+      }
+    }
+
+    // Send the message
+    const result = await imessageService.sendMessage(recipient, message);
+
+    if (result.success) {
+      console.log(`Message sent successfully with ID: ${result.messageId}`);
+    } else {
+      console.error(`Failed to send message: ${result.error}`);
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Error in send-imessage handler:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred',
+    };
+  }
+});
+
+// Handle checking contact status for iMessage
+ipcMain.handle('check-contact-status', async (event, { recipient }) => {
+  try {
+    console.log(`Checking contact status for: ${recipient}`);
+
+    const status = await imessageService.checkContactStatus(recipient);
+    console.log(`Contact status for ${recipient}:`, status);
+
+    return {
+      success: true,
+      status,
+    };
+  } catch (error) {
+    console.error('Error checking contact status:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred',
+    };
+  }
+});
+
+// Handle checking Messages.app availability
+ipcMain.handle('check-messages-app', async () => {
+  try {
+    const isAvailable = await imessageService.isMessagesAppAvailable();
+
+    return {
+      success: true,
+      isAvailable,
+    };
+  } catch (error) {
+    console.error('Error checking Messages.app:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred',
+    };
+  }
+});
+
+// Handle launching Messages.app
+ipcMain.handle('launch-messages-app', async () => {
+  try {
+    const launched = await imessageService.launchMessagesApp();
+
+    return {
+      success: launched,
+      error: launched ? undefined : 'Failed to launch Messages.app',
+    };
+  } catch (error) {
+    console.error('Error launching Messages.app:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error occurred',

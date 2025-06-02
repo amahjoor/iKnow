@@ -22,11 +22,7 @@ interface ContactDetailProps {
   onBack: () => void;
 }
 
-export const ContactDetail: React.FC<ContactDetailProps> = ({
-  contact,
-  contacts,
-  onBack,
-}) => {
+function ContactDetail({ contact, contacts, onBack }: ContactDetailProps) {
   const [chatMessage, setChatMessage] = useState('');
   const [chatHistory, setChatHistory] = useState<
     Array<{ role: 'user' | 'assistant'; message: string }>
@@ -36,8 +32,8 @@ export const ContactDetail: React.FC<ContactDetailProps> = ({
     useState<ConversationData | null>(null);
   const [isLoadingConversation, setIsLoadingConversation] = useState(true);
   const [viewMode, setViewMode] = useState<'ai' | 'chat'>('ai'); // Toggle between AI insights and chat history
-  const [showGlobalAnalysis, setShowGlobalAnalysis] = useState(false);
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [showGlobalAnalysis] = useState(false);
+  const [showSidebar] = useState(true);
 
   // Analytics state
   const [communicationHours, setCommunicationHours] =
@@ -127,14 +123,14 @@ export const ContactDetail: React.FC<ContactDetailProps> = ({
       }));
 
     const organizationGroups = contacts.reduce(
-      (acc, contact) => {
-        if (contact.organization) {
-          if (!acc[contact.organization]) {
-            acc[contact.organization] = [];
+      (acc, contactItem) => {
+        if (contactItem.organization) {
+          if (!acc[contactItem.organization]) {
+            acc[contactItem.organization] = [];
           }
-          acc[contact.organization].push({
-            name: contact.contact_name,
-            messages: contact.total_messages,
+          acc[contactItem.organization].push({
+            name: contactItem.contact_name,
+            messages: contactItem.total_messages,
           });
         }
         return acc;
@@ -480,9 +476,9 @@ export const ContactDetail: React.FC<ContactDetailProps> = ({
                   Social Media
                 </h3>
                 <div className="space-y-2">
-                  {contact.socialMedia.map((social, index) => (
+                  {contact.socialMedia.map((social) => (
                     <div
-                      key={index}
+                      key={`${social.platform}-${social.url}`}
                       className="flex items-center justify-between py-1"
                     >
                       <div className="flex items-center gap-2">
@@ -707,11 +703,17 @@ export const ContactDetail: React.FC<ContactDetailProps> = ({
           ) : (
             // Chat History View
             <div className="flex-1 min-h-0">
-              <ChatHistory contactName={contact.contact_name} />
+              <ChatHistory
+                contactName={contact.contact_name}
+                contactPhoneNumbers={contact.phone_numbers}
+                contactEmails={contact.emails}
+              />
             </div>
           )}
         </div>
       )}
     </div>
   );
-};
+}
+
+export default ContactDetail;

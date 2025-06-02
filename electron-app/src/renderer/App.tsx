@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { ContactWithSummary } from './types/contact';
 import { combineContactData } from './utils/dataLoader';
 import { Dashboard } from './components/Dashboard';
-import { ContactDetail } from './components/ContactDetail';
+import ContactDetail from './components/ContactDetail';
 import { Insights } from './components/Insights';
 import './App.css';
 

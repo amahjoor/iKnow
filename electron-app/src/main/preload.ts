@@ -11,7 +11,12 @@ export type Channels =
   | 'load-conversation-summaries'
   | 'load-contact-photo'
   | 'load-contact-details'
-  | 'load-chat-messages';
+  | 'load-chat-messages'
+  | 'send-imessage'
+  | 'check-contact-status'
+  | 'check-messages-app'
+  | 'launch-messages-app'
+  | 'generate-message';
 
 const electronHandler = {
   ipcRenderer: {

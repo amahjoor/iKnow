@@ -341,3 +341,79 @@ Each contact file now includes rich **conversation insights** that provide analy
 - **🔄 Batch Processing** - Master index enables efficient LLM workflows
 
 ## License
+
+# Recent Interactions Enhancement
+
+In addition to the main LLM-ready conversation files, the system now creates **Recent Interactions** files that focus on communication pattern analysis with preserved formatting.
+
+## New Modular Architecture
+
+The LLM processing system has been reorganized into focused modules for better maintainability:
+
+- **`privacy_handler.py`** - Handles anonymization and privacy protection (shared by other modules)
+- **`llm_conversation.py`** - Creates main LLM conversation files with optimization and cleaning
+- **`recent_interactions.py`** - Creates recent interactions files with preserved formatting
+- **`llm_processor.py`** - Orchestrates both processing types (main interface)
+
+## New Features
+
+### Recent Interactions File (`conversation_recent_interactions.json`)
+
+**Purpose**: Analyze recent communication patterns and interaction styles between you and your contacts.
+
+**Key Differences from Main LLM File**:
+- **Preserved Formatting**: Keeps original capitalization, punctuation, and communication style
+- **Recent Focus**: Analyzes the last 75 messages (configurable) instead of entire conversation history  
+- **Pattern Analysis**: Includes interaction statistics like response ratios, message lengths, and conversation flow
+- **Minimal Cleaning**: Only removes system artifacts (read receipts, delivery notifications) but keeps conversational elements
+
+### What's Included
+
+1. **Recent Messages**: Last 75 messages with minimal processing
+2. **Interaction Analysis**:
+   - Message count breakdown (user vs contact)
+   - Response pair analysis
+   - Average message lengths
+   - Interaction ratios
+   - Time span analysis
+
+3. **Contact Information**: Same contact details as main LLM file
+4. **Privacy Protection**: Still applies anonymization if enabled
+
+### File Structure
+
+```json
+{
+  "format": "recent_interactions_analysis",
+  "purpose": "Communication pattern analysis with preserved formatting",
+  "contact": { ... },
+  "interaction_analysis": {
+    "message_count": 75,
+    "user_messages": 45,
+    "contact_messages": 30,
+    "response_pairs": 25,
+    "user_avg_message_length": 45.2,
+    "contact_avg_message_length": 32.1,
+    "timespan_hours": 168.5,
+    "interaction_ratio": 0.67
+  },
+  "recent_messages": [ ... ],
+  "metadata": { ... }
+}
+```
+
+### Use Cases
+
+- **Communication Style Analysis**: Understand how you and your contacts communicate
+- **Response Pattern Recognition**: See how conversations flow between you
+- **Interaction Frequency**: Analyze recent communication patterns
+- **Preserved Context**: Maintain original tone and formatting for better LLM understanding
+
+### Configuration
+
+- `RECENT_INTERACTIONS_COUNT`: Number of recent messages to analyze (default: 75)
+- `RECENT_INTERACTIONS_FILENAME`: Output filename (default: "conversation_recent_interactions.json")
+
+Both files work together:
+- **Main LLM File**: Optimized for general conversation understanding
+- **Recent Interactions File**: Focused on communication patterns and styles
