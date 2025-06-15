@@ -1,9 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { ContactWithSummary, ConversationData } from '../types/contact';
+import {
+  ContactWithSummary,
+  ConversationData,
+  GroupChatsData,
+  GroupChat,
+} from '../types/contact';
 import {
   loadConversationData,
   getConversationContext,
   getFullConversationForAI,
+  loadGroupChats,
+  loadGroupChatDetails,
 } from '../utils/dataLoader';
 import ChatHistory from './ChatHistory';
 import { CommunicationAnalytics } from './CommunicationAnalytics';
@@ -32,8 +39,14 @@ function ContactDetail({ contact, contacts, onBack }: ContactDetailProps) {
     useState<ConversationData | null>(null);
   const [isLoadingConversation, setIsLoadingConversation] = useState(true);
   const [viewMode, setViewMode] = useState<'ai' | 'chat'>('ai'); // Toggle between AI insights and chat history
+  const [conversationType, setConversationType] = useState<'individual' | 'group'>('individual'); // Toggle between individual and group chats
   const [showGlobalAnalysis] = useState(false);
   const [showSidebar] = useState(true);
+
+  // Group chat state
+  const [groupChatsData, setGroupChatsData] = useState<GroupChatsData | null>(null);
+  const [selectedGroupChat, setSelectedGroupChat] = useState<GroupChat | null>(null);
+  const [isLoadingGroupChats, setIsLoadingGroupChats] = useState(false);
 
   // Analytics state
   const [communicationHours, setCommunicationHours] =
@@ -134,6 +147,34 @@ function ContactDetail({ contact, contacts, onBack }: ContactDetailProps) {
 
     loadConversation();
   }, [contact.contact_name]);
+
+  // Load group chats when component mounts
+  useEffect(() => {
+    const loadGroupChatData = async () => {
+      setIsLoadingGroupChats(true);
+      try {
+        const data = await loadGroupChats();
+        setGroupChatsData(data);
+      } catch (error) {
+        console.error('Failed to load group chats:', error);
+      } finally {
+        setIsLoadingGroupChats(false);
+      }
+    };
+
+    loadGroupChatData();
+  }, []);
+
+  // Find group chats that include this contact's phone numbers
+  const getContactGroupChats = () => {
+    if (!groupChatsData || !contact.phone_numbers) return [];
+    
+    return groupChatsData.group_chats.filter((groupChat) => 
+      groupChat.participants.some((participantPhone) => 
+        contact.phone_numbers.includes(participantPhone),
+      ),
+    );
+  };
 
   // Generate database context for global AI analysis
   const getDatabaseContext = () => {
@@ -323,15 +364,47 @@ function ContactDetail({ contact, contacts, onBack }: ContactDetailProps) {
           </div>
         </div>
 
+        {/* Conversation Type Toggle */}
+        <div className="bg-white rounded-2xl p-4 shadow-lg border border-gray-200 mb-6">
+          <div className="flex items-center justify-center">
+            <div className="flex bg-gray-100 rounded-lg p-1">
+              <button
+                type="button"
+                onClick={() => setConversationType('individual')}
+                className={`px-6 py-2 rounded-md font-medium transition-all duration-200 ${
+                  conversationType === 'individual'
+                    ? 'bg-blue-600 text-white shadow-md'
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                1-on-1 Messages
+              </button>
+              <button
+                type="button"
+                onClick={() => setConversationType('group')}
+                className={`px-6 py-2 rounded-md font-medium transition-all duration-200 ${
+                  conversationType === 'group'
+                    ? 'bg-blue-600 text-white shadow-md'
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                Group Chats
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Contact Info Panel */}
         <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200">
           <h2 className="text-2xl font-bold text-gray-900 mb-6 pb-3 border-b-2 border-gray-100">
-            Contact Information
+            {conversationType === 'individual' ? 'Contact Information' : 'Group Chat Participation'}
           </h2>
 
           <div className="space-y-6">
-            {/* Basic Info */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
+            {conversationType === 'individual' ? (
+              <>
+                {/* Individual Contact Info */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
               <div>
                 <span className="font-semibold text-gray-700">
                   Total Messages:
@@ -543,8 +616,144 @@ function ContactDetail({ contact, contacts, onBack }: ContactDetailProps) {
                 </div>
               </div>
             )}
+              </>
+            ) : (
+              /* Group Chat Section */
+              <div className="space-y-6">
+                {isLoadingGroupChats ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                    <span className="ml-3 text-gray-600">Loading group chats...</span>
+                  </div>
+                ) : (
+                  <div>
+                    {getContactGroupChats().length > 0 ? (
+                      <>
+                        <div className="text-sm text-gray-600 mb-4">
+                          {contact.contact_name} participates in {getContactGroupChats().length} group chat{getContactGroupChats().length > 1 ? 's' : ''}
+                        </div>
+                        <div className="space-y-4">
+                          {getContactGroupChats().map((groupChat) => (
+                            <div
+                              key={groupChat.group_name}
+                              className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                              onClick={async () => {
+                                try {
+                                  const details = await loadGroupChatDetails(groupChat.file_path);
+                                  setSelectedGroupChat(details);
+                                } catch (error) {
+                                  console.error('Failed to load group chat details:', error);
+                                }
+                              }}
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1">
+                                  <h4 className="font-semibold text-gray-900 mb-2">
+                                    {groupChat.group_name}
+                                  </h4>
+                                  <div className="grid grid-cols-2 gap-4 text-sm text-gray-600">
+                                    <div>
+                                      <span className="font-medium">Total Messages:</span>
+                                      <span className="ml-1">{groupChat.total_messages.toLocaleString()}</span>
+                                    </div>
+                                    <div>
+                                      <span className="font-medium">Participants:</span>
+                                      <span className="ml-1">{groupChat.participants.length}</span>
+                                    </div>
+                                  </div>
+                                  <div className="mt-2 text-xs text-gray-500">
+                                    Click to view details
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-2xl">👥</div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-center py-8 text-gray-500">
+                        <div className="text-4xl mb-4">👥</div>
+                        <p className="text-lg font-medium mb-2">No Group Chats Found</p>
+                        <p className="text-sm">
+                          {contact.contact_name} doesn't appear to participate in any group chats
+                          based on their phone numbers.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
+
+        {/* Selected Group Chat Detail Modal */}
+        {selectedGroupChat && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-hidden">
+              <div className="p-6 border-b border-gray-200">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-2xl font-bold text-gray-900">
+                    {selectedGroupChat.group_name}
+                  </h3>
+                  <button
+                    onClick={() => setSelectedGroupChat(null)}
+                    className="text-gray-400 hover:text-gray-600 text-2xl font-bold"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+              <div className="p-6 overflow-y-auto max-h-96">
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <span className="font-semibold text-gray-700">Total Messages:</span>
+                      <span className="ml-2 text-gray-900">
+                        {selectedGroupChat.conversation_insights.total_messages.toLocaleString()}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-gray-700">Participants:</span>
+                      <span className="ml-2 text-gray-900">
+                        {selectedGroupChat.participants.count}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-gray-700">Date Range:</span>
+                      <span className="ml-2 text-gray-900">
+                        {selectedGroupChat.conversation_insights.date_range}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-gray-700">Messages/Day:</span>
+                      <span className="ml-2 text-gray-900">
+                        {selectedGroupChat.conversation_insights.message_frequency_per_day.toFixed(1)}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="border-t pt-4">
+                    <h4 className="font-semibold text-gray-800 mb-3">Participants</h4>
+                    <div className="space-y-2">
+                      {selectedGroupChat.participants.phone_numbers.map((phone) => (
+                        <div key={phone} className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded">
+                          <span className="font-mono text-sm">{phone}</span>
+                          <span className="text-xs text-gray-500">
+                            {selectedGroupChat.participants.activity[phone] || 0} messages
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Communication Analytics */}
         {communicationHours && communicationTrends && responsePatterns && (

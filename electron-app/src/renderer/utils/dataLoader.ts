@@ -5,6 +5,8 @@ import {
   ConversationData,
   ParsedMessage,
   ChatData,
+  GroupChatsData,
+  GroupChat,
 } from '../types/contact';
 
 export const loadContactsData = async (): Promise<ContactsData | null> => {
@@ -386,6 +388,181 @@ export const parseMessages = (
             } else {
               messageContent = contentLine;
             }
+          }
+        }
+
+        // Only add if we have actual message content
+        if (messageContent) {
+          const message: ParsedMessage = {
+            timestamp,
+            sender,
+            content: messageContent,
+            type: 'text',
+          };
+
+          // Add read receipt data if present
+          if (readBy && readTimeText) {
+            message.readReceipt = {
+              readBy,
+              readTimeText,
+            };
+          }
+
+          messages.push(message);
+        }
+
+        // Skip ahead to avoid reprocessing lines
+        i = contentStartIndex;
+      }
+    }
+  }
+
+  // Sort messages by timestamp
+  messages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
+  const dateRange =
+    messages.length > 0
+      ? {
+          start: messages[0].timestamp,
+          end: messages[messages.length - 1].timestamp,
+        }
+      : undefined;
+
+  return {
+    messages,
+    totalCount: messages.length,
+    dateRange,
+  };
+};
+
+// Group Chat Functions
+export const loadGroupChats = async (): Promise<GroupChatsData | null> => {
+  try {
+    const response = await window.electron.ipcRenderer.invoke('load-group-chats');
+    if (response.success) {
+      return response.data as GroupChatsData;
+    }
+    console.error('Failed to load group chats:', response.error);
+    return null;
+  } catch (error) {
+    console.error('Error loading group chats:', error);
+    return null;
+  }
+};
+
+export const loadGroupChatDetails = async (
+  groupChatPath: string,
+): Promise<GroupChat | null> => {
+  try {
+    const response = await window.electron.ipcRenderer.invoke(
+      'load-group-chat-details',
+      groupChatPath,
+    );
+
+    if (response.success) {
+      return response.data as GroupChat;
+    }
+
+    console.error('Failed to load group chat details:', response.error);
+    return null;
+  } catch (error) {
+    console.error(`Error loading group chat details for ${groupChatPath}:`, error);
+    return null;
+  }
+};
+
+export const loadGroupChatMessages = async (
+  groupChatPath: string,
+): Promise<string | null> => {
+  try {
+    const response = await window.electron.ipcRenderer.invoke(
+      'load-group-chat-messages',
+      groupChatPath,
+    );
+
+    if (response.success) {
+      return response.data as string;
+    }
+
+    console.error('Failed to load group chat messages:', response.error);
+    return null;
+  } catch (error) {
+    console.error(`Error loading group chat messages for ${groupChatPath}:`, error);
+    return null;
+  }
+};
+
+// Parse group chat messages into structured data
+export const parseGroupChatMessages = (
+  rawMessages: string,
+  _groupChatName: string,
+): ChatData => {
+  const lines = rawMessages.split('\n').filter((line) => line.trim());
+  const messages: ParsedMessage[] = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+
+    // Look for date/time pattern with optional read receipt
+    const timestampRegex =
+      /^([A-Za-z]{3}\s+\d{1,2},\s+\d{4}\s+\d{1,2}:\d{2}:\d{2}\s+(?:AM|PM))(?:\s+\(Read by (them|you) after (.+?)\))?/;
+
+    const timestampMatch = line.match(timestampRegex);
+    if (timestampMatch) {
+      const timestampStr = timestampMatch[1];
+      const timestamp = new Date(timestampStr);
+
+      // Extract read receipt info if present
+      const readBy = timestampMatch[2] as 'them' | 'you' | undefined;
+      const readTimeText = timestampMatch[3];
+
+      // Check if next line exists and contains sender info
+      if (i + 1 < lines.length) {
+        const senderLine = lines[i + 1].trim();
+
+        // Skip metadata lines
+        if (
+          senderLine.includes('Tapbacks:') ||
+          senderLine.includes('This message responded')
+        ) {
+          // eslint-disable-next-line no-continue
+          continue;
+        }
+
+        // Determine sender - "Me" or phone number/email
+        const isFromUser = senderLine === 'Me';
+        const sender: 'me' | 'contact' = isFromUser ? 'me' : 'contact';
+
+        // Look for message content
+        let messageContent = '';
+        const contentStartIndex = i + 2;
+
+        // Collect message content until next timestamp or end of file
+        for (let j = contentStartIndex; j < lines.length; j += 1) {
+          const contentLine = lines[j].trim();
+
+          // Stop if we hit another timestamp
+          if (timestampRegex.test(contentLine)) {
+            break;
+          }
+
+          // Skip metadata lines
+          if (
+            contentLine.includes('(Read by') ||
+            contentLine.includes('Tapbacks:') ||
+            contentLine.includes('This message responded') ||
+            contentLine.includes('Edited') ||
+            contentLine.startsWith('/Users/') // File attachments
+          ) {
+            // eslint-disable-next-line no-continue
+            continue;
+          }
+
+          // Add non-empty content
+          if (contentLine) {
+            messageContent = messageContent
+              ? `${messageContent}\n${contentLine}`
+              : contentLine;
           }
         }
 

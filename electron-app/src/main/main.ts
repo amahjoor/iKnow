@@ -359,6 +359,108 @@ ipcMain.handle('load-contacts-from-originals', async () => {
   }
 });
 
+// Handle loading group chats summary
+ipcMain.handle('load-group-chats', async () => {
+  try {
+    const groupChatsPath = path.join(
+      __dirname,
+      '../../../data_aggregation/data/_group_chats/group_chats_summary.json',
+    );
+
+    if (!fs.existsSync(groupChatsPath)) {
+      return { success: false, error: 'Group chats summary not found' };
+    }
+
+    const groupChatsData = fs.readFileSync(groupChatsPath, 'utf8');
+    const parsedData = JSON.parse(groupChatsData);
+
+    return {
+      success: true,
+      data: parsedData,
+    };
+  } catch (error) {
+    console.error('Error loading group chats:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
+// Handle loading specific group chat details
+ipcMain.handle('load-group-chat-details', async (event, groupChatPath) => {
+  try {
+    const fullPath = path.join(
+      __dirname,
+      '../../../data_aggregation/data/_group_chats',
+      groupChatPath,
+      'group_chat.json',
+    );
+
+    if (!fs.existsSync(fullPath)) {
+      return { success: false, error: 'Group chat details not found' };
+    }
+
+    const groupChatData = fs.readFileSync(fullPath, 'utf8');
+    const parsedData = JSON.parse(groupChatData);
+
+    return {
+      success: true,
+      data: parsedData,
+    };
+  } catch (error) {
+    console.error(
+      `Error loading group chat details for ${groupChatPath}:`,
+      error,
+    );
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
+// Handle loading group chat messages
+ipcMain.handle('load-group-chat-messages', async (event, groupChatPath) => {
+  try {
+    const fullPath = path.join(
+      __dirname,
+      '../../../data_aggregation/data/_group_chats',
+      groupChatPath,
+    );
+
+    if (!fs.existsSync(fullPath)) {
+      return { success: false, error: 'Group chat directory not found' };
+    }
+
+    const files = fs.readdirSync(fullPath);
+
+    // Look for the .txt file (message history)
+    const messageFile = files.find((file) => file.endsWith('.txt'));
+    
+    if (!messageFile) {
+      return { success: false, error: 'Group chat message file not found' };
+    }
+
+    const messagesPath = path.join(fullPath, messageFile);
+    const messagesData = fs.readFileSync(messagesPath, 'utf8');
+
+    return {
+      success: true,
+      data: messagesData,
+    };
+  } catch (error) {
+    console.error(
+      `Error loading group chat messages for ${groupChatPath}:`,
+      error,
+    );
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
 // Handle OpenAI chat requests
 ipcMain.handle('openai-chat', async (event, { messages, contactContext }) => {
   try {

@@ -16,7 +16,10 @@ export type Channels =
   | 'check-contact-status'
   | 'check-messages-app'
   | 'launch-messages-app'
-  | 'generate-message';
+  | 'generate-message'
+  | 'load-group-chats'
+  | 'load-group-chat-details'
+  | 'load-group-chat-messages';
 
 const electronHandler = {
   ipcRenderer: {

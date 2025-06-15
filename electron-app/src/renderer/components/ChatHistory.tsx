@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ChatData, ParsedMessage } from '../types/contact';
-import { loadChatMessages, parseMessages } from '../utils/dataLoader';
+import { loadChatMessages, parseMessages, loadGroupChatMessages, parseGroupChatMessages } from '../utils/dataLoader';
 import AIMessageAssistant from './AIMessageAssistant';
 
 interface ChatHistoryProps {
   contactName: string;
   contactPhoneNumbers: string[];
   contactEmails?: string[];
+  isGroupChat?: boolean;
+  groupChatPath?: string;
 }
 
 interface ContactStatus {
@@ -18,6 +20,8 @@ function ChatHistory({
   contactName,
   contactPhoneNumbers,
   contactEmails = [],
+  isGroupChat = false,
+  groupChatPath = '',
 }: ChatHistoryProps) {
   const [chatData, setChatData] = useState<ChatData | null>(null);
   const [loading, setLoading] = useState(true);

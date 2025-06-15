@@ -55,6 +55,13 @@ export interface ConversationSummariesData {
   summaries: ConversationSummary[];
 }
 
+export interface GroupChatSummary {
+  group_name: string;
+  file_path: string;
+  participants: string[];
+  total_messages: number;
+}
+
 export interface ContactWithSummary {
   contact_name: string;
   phone_numbers: string[];
@@ -85,6 +92,8 @@ export interface ContactWithSummary {
     last_message_date_formatted: string;
     last_message_timestamp: string;
   };
+  // Group chat participation
+  group_chats?: GroupChatSummary[];
 }
 
 // Types for parsed chat messages
@@ -131,4 +140,51 @@ export interface ConversationData {
     phone_number_usage: Record<string, number>;
   };
   messages: Message[];
+}
+
+// New types for group chat data
+export interface GroupChatParticipant {
+  phone_number?: string;
+  email?: string;
+  activity_count: number;
+}
+
+export interface GroupChatInsights {
+  total_messages: number;
+  sent_messages: number;
+  received_messages: number;
+  date_range: string;
+  conversation_span_days: number;
+  message_frequency_per_day: number;
+  most_active_participant: string;
+}
+
+export interface GroupChat {
+  group_name: string;
+  file_name: string;
+  type: 'group_chat';
+  participants: {
+    phone_numbers: string[];
+    count: number;
+    activity: Record<string, number>;
+  };
+  conversation_insights: GroupChatInsights;
+  message_history: Array<{
+    filename: string;
+    path: string;
+    type: string;
+  }>;
+  metadata: {
+    generated_at: string;
+    format: string;
+  };
+}
+
+export interface GroupChatsData {
+  metadata: {
+    total_group_chats: number;
+    generated_at: string;
+    format: string;
+  };
+  group_chats: GroupChatSummary[];
 }
