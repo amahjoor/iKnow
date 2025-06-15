@@ -66,6 +66,45 @@ function ContactDetail({ contact, contacts, onBack }: ContactDetailProps) {
     low: 'bg-gray-100 text-gray-800 border-gray-300',
   };
 
+  // Helper function to get the most active phone number using real phone numbers
+  const getMostActivePhoneNumber = (): string => {
+    if (!contact.phone_numbers || contact.phone_numbers.length === 0) {
+      return 'No phone number';
+    }
+
+    // If we have phone usage data from summary, use it to find the most active real phone number
+    if (
+      contact.summary?.phone_number_usage &&
+      Object.keys(contact.summary.phone_number_usage).length > 0
+    ) {
+      // Find the phone number with the highest usage count
+      let maxUsage = 0;
+      let mostActiveIndex = 0;
+
+      Object.entries(contact.summary.phone_number_usage).forEach(
+        ([phoneKey, usage]) => {
+          // Try to map the usage key to our real phone numbers
+          // The usage key might be anonymized, so we'll use the index/order instead
+          const keyIndex = parseInt(phoneKey.replace(/\D/g, ''), 10) - 1; // Extract number and convert to 0-based index
+          if (
+            keyIndex >= 0 &&
+            keyIndex < contact.phone_numbers.length &&
+            usage &&
+            usage > maxUsage
+          ) {
+            maxUsage = usage;
+            mostActiveIndex = keyIndex;
+          }
+        },
+      );
+
+      return contact.phone_numbers[mostActiveIndex] || contact.phone_numbers[0];
+    }
+
+    // If no usage data, return the first phone number
+    return contact.phone_numbers[0];
+  };
+
   // Load conversation data when component mounts
   useEffect(() => {
     const loadConversation = async () => {
@@ -337,8 +376,7 @@ function ContactDetail({ contact, contacts, onBack }: ContactDetailProps) {
                       Most Active:
                     </span>
                     <span className="ml-2 text-gray-900 font-mono text-xs">
-                      {contact.summary.most_active_number ||
-                        contact.phone_numbers[0]}
+                      {getMostActivePhoneNumber()}
                     </span>
                   </div>
                 </>
