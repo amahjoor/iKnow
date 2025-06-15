@@ -181,12 +181,12 @@ def is_group_chat_filename(filename):
     # Default to group chat if uncertain
     return True
 
-def export_individual_messages_only(temp_export_dir):
+def export_messages_including_groups(temp_export_dir):
     """
-    Export all messages, then filter to keep only individual conversations
+    Export all messages, including both individual conversations and group chats
     """
     try:
-        print("Exporting all messages...")
+        print("Exporting all messages (individual + group chats)...")
         
         # Run imessage-exporter to export all messages to temp directory
         cmd = [
@@ -201,7 +201,7 @@ def export_individual_messages_only(temp_export_dir):
             print(f"Warning: imessage-exporter returned code {result.returncode}")
             print(f"stderr: {result.stderr}")
         
-        # Filter out group chats
+        # Categorize all message files
         individual_files = []
         group_files = []
         
@@ -214,13 +214,13 @@ def export_individual_messages_only(temp_export_dir):
                         individual_files.append(filename)
         
         print(f"Found {len(individual_files)} individual conversations")
-        print(f"Filtered out {len(group_files)} group chats")
+        print(f"Found {len(group_files)} group chats")
         
-        return individual_files
+        return individual_files, group_files
         
     except Exception as e:
         print(f"Error exporting messages: {str(e)}")
-        return []
+        return [], []
 
 def get_phone_type_from_vcard(vcard, phone_number):
     """
@@ -565,7 +565,7 @@ def process_vcard_data(vcard_data):
         os.makedirs(temp_export_dir, exist_ok=True)
         
         print("🔄 Step 1: Exporting all individual messages...")
-        individual_message_files = export_individual_messages_only(temp_export_dir)
+        individual_message_files, group_message_files = export_messages_including_groups(temp_export_dir)
         
         print(f"\n🔄 Step 2: Processing {len(list(vcards))} contacts...")
         
@@ -685,6 +685,9 @@ def process_vcard_data(vcard_data):
             if os.path.exists(source):
                 shutil.copy2(source, dest)
         
+        # Process group chats
+        group_chat_data = process_group_chats(group_message_files, temp_export_dir, MAIN_OUTPUT_FOLDER)
+        
         # Create summary files
         print(f"\n🔄 Step 4: Creating summary files...")
         create_summary_files(contact_data, MAIN_OUTPUT_FOLDER)
@@ -710,10 +713,12 @@ def process_vcard_data(vcard_data):
         print(f"   Contacts filtered out: {filtered_count}")
         print(f"   Total contacts processed: {contact_count + filtered_count}")
         print(f"   LLM conversations created: {len(llm_conversations_data)}")
+        print(f"   Group chats processed: {len(group_chat_data) if group_chat_data else 0}")
         print(f"\n📁 Output location: {MAIN_OUTPUT_FOLDER}/")
         print(f"📁 Individual contacts: {MAIN_OUTPUT_FOLDER}/[ContactName]/contact.json")
         print(f"📁 LLM conversations: {MAIN_OUTPUT_FOLDER}/[ContactName]/conversation_llm.json")
         print(f"📁 Recent interactions: {MAIN_OUTPUT_FOLDER}/[ContactName]/{RECENT_INTERACTIONS_FILENAME}")
+        print(f"📁 Group chats: {MAIN_OUTPUT_FOLDER}/_group_chats/[GroupName]/group_chat.json")
         print(f"📁 All messages (flat): {MAIN_OUTPUT_FOLDER}/{ALL_MESSAGES_FOLDER}/")
         print(f"📁 Summary files: {MAIN_OUTPUT_FOLDER}/{SUMMARY_FOLDER}/")
         print(f"📁 LLM master index: {MAIN_OUTPUT_FOLDER}/{LLM_FOLDER}/{LLM_INDEX_FILE}")
@@ -1012,6 +1017,289 @@ def create_consolidated_message_file(contact_name, phone_numbers, temp_export_di
         print(f"  ! Error creating consolidated message file: {str(e)}")
         return None
 
+def parse_group_chat_file(file_path):
+    """
+    Parse a group chat message file to extract participants and messages
+    """
+    messages = []
+    participants = set()
+    group_name = None
+    
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        current_message = {}
+        expecting_sender = False  # Flag to track if next line should be sender
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                # Save current message if exists
+                if current_message.get('content'):
+                    messages.append(current_message.copy())
+                    current_message = {}
+                expecting_sender = False
+                continue
+            
+            # Check for timestamp pattern
+            timestamp_patterns = [
+                r'^(\w{3}\s+\d{1,2},\s+\d{4}\s+\d{1,2}:\d{2}:\d{2}\s+[AP]M)',
+                r'^(\d{1,2}/\d{1,2}/\d{2,4}\s+\d{1,2}:\d{2}:\d{2}\s+[AP]M)',
+            ]
+            
+            timestamp_match = None
+            for pattern in timestamp_patterns:
+                timestamp_match = re.match(pattern, line)
+                if timestamp_match:
+                    break
+            
+            if timestamp_match:
+                # Save previous message if exists
+                if current_message.get('content'):
+                    messages.append(current_message.copy())
+                
+                # Start new message
+                current_message = {
+                    'timestamp_raw': timestamp_match.group(1),
+                    'content': '',
+                    'sender': 'unknown'
+                }
+                expecting_sender = True  # Next non-empty line should be the sender
+                
+            elif expecting_sender:
+                # This line immediately follows a timestamp, so it's the sender
+                if line in ['Me', 'me']:
+                    current_message['sender'] = 'me'
+                elif re.match(r'^\+\d{10,15}$', line) or re.match(r'^\d{10,15}$', line):
+                    # Phone number sender
+                    normalized_phone = normalize_phone_number(line)
+                    current_message['sender'] = normalized_phone
+                    participants.add(normalized_phone)
+                elif '@' in line and '.' in line and len(line.split()) == 1:
+                    # Email address sender
+                    current_message['sender'] = line
+                    participants.add(line)
+                else:
+                    # Unknown sender format, treat as content
+                    current_message['sender'] = 'unknown'
+                    current_message['content'] = line
+                
+                expecting_sender = False
+                
+            elif line.startswith('(Read by') or line.startswith('(Delivered') or line.startswith('Tapbacks:'):
+                # Read receipt, delivery info, or tapback info - skip
+                continue
+                
+            else:
+                # Content line
+                if current_message.get('content'):
+                    current_message['content'] += ' ' + line
+                else:
+                    current_message['content'] = line
+        
+        # Add the last message
+        if current_message.get('content'):
+            messages.append(current_message)
+        
+        # Convert timestamps to standardized format
+        for msg in messages:
+            try:
+                if 'timestamp_raw' in msg:
+                    parsed_time = parse(msg['timestamp_raw'])
+                    msg['timestamp'] = parsed_time.isoformat()
+                    del msg['timestamp_raw']
+            except Exception:
+                if 'timestamp_raw' in msg:
+                    msg['timestamp'] = msg['timestamp_raw']
+                    del msg['timestamp_raw']
+        
+        return {
+            'messages': messages,
+            'participants': list(participants),
+            'total_messages': len(messages),
+            'group_name': group_name  # We'll try to extract this later
+        }
+        
+    except Exception as e:
+        print(f"  ! Error parsing group chat file {file_path}: {str(e)}")
+        return None
+
+def create_group_chat_json(group_filename, group_data, group_folder):
+    """
+    Create a JSON file for a group chat similar to contact.json
+    """
+    if not group_data:
+        return None
+    
+    # Extract a cleaner group name from filename
+    group_name = group_filename.replace('.txt', '')
+    
+    # Generate conversation metadata
+    messages = group_data['messages']
+    participants = group_data['participants']
+    
+    if not messages:
+        return None
+    
+    # Basic stats
+    total_messages = len(messages)
+    sent_messages = sum(1 for m in messages if m.get('sender') == 'me')
+    received_messages = total_messages - sent_messages
+    
+    # Participant activity
+    participant_activity = {}
+    for participant in participants:
+        participant_activity[participant] = sum(1 for m in messages if m.get('sender') == participant)
+    
+    # Date range
+    timestamps = [m.get('timestamp') for m in messages if m.get('timestamp')]
+    if timestamps:
+        try:
+            first_date = parse(min(timestamps))
+            last_date = parse(max(timestamps))
+            date_range = f"{first_date.strftime('%Y-%m-%d')} to {last_date.strftime('%Y-%m-%d')}"
+            conversation_span_days = (last_date - first_date).days
+        except Exception:
+            date_range = "Unknown"
+            conversation_span_days = 0
+    else:
+        date_range = "Unknown"
+        conversation_span_days = 0
+    
+    # Message frequency
+    message_frequency = round(total_messages / max(conversation_span_days, 1), 2) if conversation_span_days > 0 else total_messages
+    
+    # Create group chat data structure
+    group_json = {
+        "group_name": group_name,
+        "file_name": group_filename,
+        "type": "group_chat",
+        "participants": {
+            "phone_numbers": participants,
+            "count": len(participants),
+            "activity": participant_activity
+        },
+        "conversation_insights": {
+            "total_messages": total_messages,
+            "sent_messages": sent_messages,
+            "received_messages": received_messages,
+            "date_range": date_range,
+            "conversation_span_days": conversation_span_days,
+            "message_frequency_per_day": message_frequency,
+            "most_active_participant": max(participant_activity.items(), key=lambda x: x[1])[0] if participant_activity else "unknown"
+        },
+        "message_history": [{
+            "filename": group_filename,
+            "path": group_filename,
+            "type": "group_chat_messages"
+        }],
+        "metadata": {
+            "generated_at": "2025-01-15T06:06:00Z",
+            "format": "group_chat_export_v1"
+        }
+    }
+    
+    # Save group chat JSON
+    json_filename = 'group_chat.json'
+    json_path = os.path.join(group_folder, json_filename)
+    
+    try:
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(group_json, f, indent=2, ensure_ascii=False)
+        
+        print(f"  ✓ Created group chat JSON: {json_path}")
+        return group_json
+        
+    except Exception as e:
+        print(f"  ! Error creating group chat JSON: {str(e)}")
+        return None
+
+def process_group_chats(group_files, temp_export_dir, output_folder):
+    """
+    Process all group chat files and create structured data
+    """
+    print(f"\n🔄 Step 3: Processing {len(group_files)} group chats...")
+    
+    # Create group chats folder
+    group_chats_folder = os.path.join(output_folder, "_group_chats")
+    os.makedirs(group_chats_folder, exist_ok=True)
+    
+    group_chat_data = {}
+    processed_count = 0
+    
+    for group_file in group_files:
+        group_file_path = os.path.join(temp_export_dir, group_file)
+        
+        if not os.path.exists(group_file_path):
+            continue
+        
+        print(f"\n💬 Processing group: {group_file}")
+        
+        # Parse the group chat file
+        group_data = parse_group_chat_file(group_file_path)
+        
+        if not group_data or group_data['total_messages'] < MIN_MESSAGE_COUNT:
+            if group_data:
+                print(f"  ⏭️  Skipping (only {group_data['total_messages']} messages, need {MIN_MESSAGE_COUNT})")
+            else:
+                print(f"  ⏭️  Skipping (failed to parse)")
+            continue
+        
+        print(f"  ✅ Found {group_data['total_messages']} messages from {len(group_data['participants'])} participants")
+        
+        # Create a safe folder name for this group
+        safe_group_name = re.sub(r'[\\/*?:"<>|]', '_', group_file.replace('.txt', ''))
+        group_folder = os.path.join(group_chats_folder, safe_group_name)
+        os.makedirs(group_folder, exist_ok=True)
+        
+        # Copy the original message file
+        dest_path = os.path.join(group_folder, group_file)
+        shutil.copy2(group_file_path, dest_path)
+        
+        # Create structured JSON
+        group_json = create_group_chat_json(group_file, group_data, group_folder)
+        
+        if group_json:
+            group_chat_data[safe_group_name] = {
+                'file_path': os.path.join("_group_chats", safe_group_name, "group_chat.json"),
+                'participants': group_data['participants'],
+                'total_messages': group_data['total_messages'],
+                'group_name': group_file.replace('.txt', '')
+            }
+            processed_count += 1
+    
+    print(f"\n📊 Group Chat Summary:")
+    print(f"   Total group chats found: {len(group_files)}")
+    print(f"   Successfully processed: {processed_count}")
+    
+    # Create group chat summary file
+    if group_chat_data:
+        summary_data = {
+            "metadata": {
+                "total_group_chats": len(group_chat_data),
+                "generated_at": "2025-01-15T06:06:00Z",
+                "format": "group_chat_summary_v1"
+            },
+            "group_chats": []
+        }
+        
+        for group_name, data in group_chat_data.items():
+            summary_data["group_chats"].append({
+                "group_name": data['group_name'],
+                "file_path": data['file_path'],
+                "participants": data['participants'],
+                "total_messages": data['total_messages']
+            })
+        
+        summary_path = os.path.join(group_chats_folder, 'group_chats_summary.json')
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(summary_data, f, indent=2, ensure_ascii=False)
+        
+        print(f"  ✓ Created group chat summary: {summary_path}")
+    
+    return group_chat_data
+
 if __name__ == "__main__":
     print("🚀 Starting Integrated Contacts & Messages Exporter v2 (JSON)")
     print("="*60)
@@ -1081,7 +1369,7 @@ if __name__ == "__main__":
     print(f"✓ Using VCF file: {vcf_path}")
     print("\n🎯 This script will:")
     print("• Export all contacts to individual folders as JSON")
-    print("• Export individual message conversations only (no group chats)")
+    print("• Export individual message conversations AND group chats")
     print(f"• Only export contacts with {MIN_MESSAGE_COUNT}+ messages")
     print("• Standardize phone number formatting")
     print("• Create structured, machine-readable JSON files")
